@@ -48,7 +48,8 @@
 </head>
 <body class="bg-brand-900 text-slate-200 min-h-screen font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200"
       x-data="dashboardApp()"
-      x-init="initDashboard()">
+      x-init="initDashboard()"
+      @keydown.window="handleKeydown($event)">
 
     <!-- ================================================================= -->
     <!-- PIN AUTHENTICATION OVERLAY (Shown if not logged in)               -->
@@ -164,8 +165,8 @@
                 <!-- Manual refresh button -->
                 <button @click="fetchAllData()" 
                         :disabled="isLoading"
-                        class="px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-slate-700 active:scale-95 text-xs font-medium text-slate-200 border border-slate-700/80 transition flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500">
-                    <svg class="w-3.5 h-3.5" :class="{'animate-spin': isLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-700 hover:bg-slate-700 active:scale-95 text-xs font-medium text-slate-200 border border-slate-700/80 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                    <svg class="w-4 h-4" :class="{'animate-spin': isLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
                     Refresh
@@ -173,8 +174,8 @@
 
                 <!-- Logout / Lock -->
                 <button @click="logout()" 
-                        class="px-3 py-1.5 rounded-lg bg-brand-700/60 hover:bg-rose-950/40 text-xs font-medium text-slate-300 hover:text-rose-300 border border-slate-700/80 transition flex items-center gap-1.5 focus:outline-none">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-700/60 hover:bg-rose-950/40 text-xs font-medium text-slate-300 hover:text-rose-300 border border-slate-700/80 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-rose-500">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                     </svg>
                     Kunci
@@ -411,7 +412,8 @@
                                     <!-- Actions: Logs Modal Button (44px target) -->
                                     <td class="py-3 pr-2 text-right">
                                         <button @click="openLogsModal(c.name)"
-                                                class="px-2.5 py-1.5 rounded-lg bg-brand-700 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-300 border border-slate-700/70 text-xs font-mono transition focus:outline-none focus:ring-1 focus:ring-cyan-500">
+                                                class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-3 py-2 rounded-lg bg-brand-700 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-200 border border-slate-700/70 text-xs font-mono transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                                aria-label="Lihat log kontainer">
                                             Logs
                                         </button>
                                     </td>
@@ -489,11 +491,12 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <button @click="fetchContainerLogs(activeLogContainer)" 
-                            class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-300 transition">
+                            class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs font-mono text-slate-200 border border-slate-700 transition focus:outline-none focus:ring-2 focus:ring-cyan-500">
                         Reload
                     </button>
                     <button @click="logsModalOpen = false" 
-                            class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition focus:outline-none">
+                            class="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-500"
+                            aria-label="Tutup jendela modal">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
@@ -516,7 +519,7 @@
             <div class="px-5 py-3 border-t border-slate-800 bg-brand-800 flex justify-between items-center text-xs text-slate-400">
                 <span>Menampilkan hingga 60 baris log terakhir</span>
                 <button @click="logsModalOpen = false" 
-                        class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition">
+                        class="min-h-[44px] px-5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium border border-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-500">
                     Tutup
                 </button>
             </div>
@@ -555,6 +558,23 @@
                 ramDataPoints: [],
 
                 // PIN Methods
+                handleKeydown(e) {
+                    if (!this.authenticated && !this.logsModalOpen) {
+                        if (e.key >= '0' && e.key <= '9') {
+                            e.preventDefault();
+                            this.appendPin(e.key);
+                        } else if (e.key === 'Backspace') {
+                            e.preventDefault();
+                            this.backspacePin();
+                        } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            this.clearPin();
+                        } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            this.submitPin();
+                        }
+                    }
+                },
                 appendPin(num) {
                     if (this.pinInput.length < 6) {
                         this.pinInput += num;

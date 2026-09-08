@@ -1,4 +1,4 @@
-# VPS Monitor Dashboard — Mission Control
+# VPS Monitor Dashboard // Mission Control
 
 Sistem pemantauan (*monitoring*) dan visualisasi performa infrastruktur server VPS Oracle Cloud ARM64 (`digitalneeds.my.id`) yang ringan (< 30 MB RAM), berkecepatan tinggi, dan hemat sumber daya (*zero bloatware*).
 
