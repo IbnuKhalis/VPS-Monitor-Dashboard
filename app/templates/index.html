@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPS Mission Control // digitalneeds.my.id</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            900: '#070b14',
+                            800: '#0b1120',
+                            700: '#111a2e',
+                            600: '#1e293b',
+                            500: '#334155'
+                        },
+                        status: {
+                            emerald: '#10b981',
+                            amber: '#f59e0b',
+                            rose: '#f43f5e',
+                            cyan: '#06b6d4'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        /* Smooth scrollbar for log viewer */
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #0b1120; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-brand-900 text-slate-200 min-h-screen font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200"
+      x-data="dashboardApp()"
+      x-init="initDashboard()">
+
+    <!-- ================================================================= -->
+    <!-- PIN AUTHENTICATION OVERLAY (Shown if not logged in)               -->
+    <!-- ================================================================= -->
+    <div x-cloak x-show="!authenticated" 
+         class="fixed inset-0 z-50 flex items-center justify-center bg-brand-900/95 backdrop-blur-md px-4">
+        <div class="w-full max-w-sm bg-brand-800 border border-slate-700/80 rounded-2xl p-6 shadow-2xl relative overflow-hidden"
+             @keydown.escape.window="pinInput = ''">
+            
+            <div class="text-center mb-6">
+                <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 text-cyan-400 mb-3">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                </div>
+                <h2 class="text-lg font-bold text-white tracking-wide">VPS MISSION CONTROL</h2>
+                <p class="text-xs text-slate-400 mt-1">Masukkan PIN untuk membuka dashboard produksi</p>
+            </div>
+
+            <!-- PIN Display -->
+            <div class="mb-5 flex justify-center gap-2">
+                <template x-for="i in 6" :key="i">
+                    <div class="w-10 h-12 rounded-lg border flex items-center justify-center text-xl font-mono font-bold transition-all"
+                         :class="pinInput.length >= i ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300' : 'border-slate-700 bg-slate-900/60 text-slate-500'">
+                        <span x-text="pinInput.length >= i ? '•' : ''"></span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Error message -->
+            <div x-show="pinError" class="mb-4 text-center">
+                <span class="text-xs font-medium text-rose-400 bg-rose-950/40 border border-rose-800/60 px-3 py-1 rounded-full" x-text="pinError"></span>
+            </div>
+
+            <!-- Keypad Buttons (44px+ tap targets) -->
+            <div class="grid grid-cols-3 gap-2 mb-4">
+                <template x-for="num in ['1', '2', '3', '4', '5', '6', '7', '8', '9']" :key="num">
+                    <button @click="appendPin(num)" 
+                            type="button"
+                            class="h-12 rounded-xl bg-brand-700/80 hover:bg-slate-700 active:scale-95 text-lg font-semibold text-slate-100 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        <span x-text="num"></span>
+                    </button>
+                </template>
+                <button @click="clearPin()" 
+                        type="button"
+                        class="h-12 rounded-xl bg-brand-700/40 hover:bg-rose-950/40 text-xs font-semibold text-rose-400 transition border border-slate-700/50 flex items-center justify-center focus:outline-none">
+                    CLEAR
+                </button>
+                <button @click="appendPin('0')" 
+                        type="button"
+                        class="h-12 rounded-xl bg-brand-700/80 hover:bg-slate-700 active:scale-95 text-lg font-semibold text-slate-100 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                    0
+                </button>
+                <button @click="backspacePin()" 
+                        type="button"
+                        class="h-12 rounded-xl bg-brand-700/40 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition border border-slate-700/50 flex items-center justify-center focus:outline-none">
+                    DEL
+                </button>
+            </div>
+
+            <!-- Direct Submit Button -->
+            <button @click="submitPin()" 
+                    :disabled="pinInput.length < 4 || isAuthenticating"
+                    class="w-full h-11 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:hover:bg-cyan-600 text-sm font-semibold text-white transition flex items-center justify-center gap-2 shadow-lg shadow-cyan-950">
+                <span x-show="!isAuthenticating">Buka Dashboard</span>
+                <span x-show="isAuthenticating" class="inline-flex items-center gap-2">
+                    <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Memverifikasi...
+                </span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- MAIN DASHBOARD CONTENT (When Authenticated)                       -->
+    <!-- ================================================================= -->
+    <div x-show="authenticated" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- Top Navigation & Header -->
+        <header class="flex flex-col md:flex-row md:items-center md:justify-between pb-6 border-b border-slate-800 gap-4">
+            <div class="flex items-center gap-3">
+                <div class="h-10 w-10 rounded-xl bg-cyan-950/80 border border-cyan-700/60 flex items-center justify-center text-cyan-400 font-mono font-bold text-lg">
+                    DN
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-xl font-bold tracking-tight text-white">digitalneeds.my.id</h1>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border"
+                              :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800' : 'bg-amber-950/60 text-amber-300 border-amber-800'">
+                            <span class="w-2 h-2 rounded-full animate-pulse"
+                                  :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-400' : 'bg-amber-400'"></span>
+                            <span x-text="health.overall_status || 'CHECKING'"></span>
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">
+                        <span x-text="metrics.hostname || 'vps-main'"></span> &bull; 
+                        <span x-text="metrics.arch || 'aarch64'"></span> &bull; 
+                        Uptime: <span class="text-slate-200 font-medium" x-text="metrics.uptime?.formatted || '-'"></span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Controls and shortcuts -->
+            <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+                <!-- Timestamp badge -->
+                <div class="text-xs font-mono text-slate-400 bg-brand-800 px-3 py-1.5 rounded-lg border border-slate-800">
+                    <span x-text="metrics.timestamp || '-'"></span>
+                </div>
+
+                <!-- Manual refresh button -->
+                <button @click="fetchAllData()" 
+                        :disabled="isLoading"
+                        class="px-3 py-1.5 rounded-lg bg-brand-700 hover:bg-slate-700 active:scale-95 text-xs font-medium text-slate-200 border border-slate-700/80 transition flex items-center gap-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500">
+                    <svg class="w-3.5 h-3.5" :class="{'animate-spin': isLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Refresh
+                </button>
+
+                <!-- Logout / Lock -->
+                <button @click="logout()" 
+                        class="px-3 py-1.5 rounded-lg bg-brand-700/60 hover:bg-rose-950/40 text-xs font-medium text-slate-300 hover:text-rose-300 border border-slate-700/80 transition flex items-center gap-1.5 focus:outline-none">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                    Kunci
+                </button>
+            </div>
+        </header>
+
+        <!-- Infrastructure Quick Access Bar -->
+        <div class="my-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <a href="https://digitalneeds.my.id" target="_blank" rel="noopener"
+               class="flex items-center justify-between p-3 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                    <div>
+                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Gateway Utama</div>
+                        <div class="text-[11px] text-slate-400 font-mono">digitalneeds.my.id</div>
+                    </div>
+                </div>
+                <span class="text-xs text-slate-500 group-hover:text-slate-300">&rarr;</span>
+            </a>
+
+            <a href="https://graduance.digitalneeds.my.id" target="_blank" rel="noopener"
+               class="flex items-center justify-between p-3 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-2 h-2 rounded-full bg-cyan-400"></div>
+                    <div>
+                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Graduance Portal</div>
+                        <div class="text-[11px] text-slate-400 font-mono">graduance.digitalneeds.my.id</div>
+                    </div>
+                </div>
+                <span class="text-xs text-slate-500 group-hover:text-slate-300">&rarr;</span>
+            </a>
+
+            <a href="https://status.digitalneeds.my.id" target="_blank" rel="noopener"
+               class="flex items-center justify-between p-3 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                    <div>
+                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Uptime Kuma</div>
+                        <div class="text-[11px] text-slate-400 font-mono">status.digitalneeds.my.id</div>
+                    </div>
+                </div>
+                <span class="text-xs text-slate-500 group-hover:text-slate-300">&rarr;</span>
+            </a>
+        </div>
+
+        <!-- Metric Stat Cards (4 Columns) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            
+            <!-- CPU Card -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">CPU Load (2 OCPU)</span>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.cpu?.cores || 2) + ' Cores'"></span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.cpu?.percent ?? 0) + '%'"></span>
+                    <span class="text-xs text-slate-400 font-mono" x-show="metrics.cpu?.freq_mhz" x-text="(metrics.cpu?.freq_mhz || 0) + ' MHz'"></span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
+                    <div class="h-2 rounded-full transition-all duration-500"
+                         :class="(metrics.cpu?.percent > 80) ? 'bg-rose-500' : (metrics.cpu?.percent > 60) ? 'bg-amber-500' : 'bg-cyan-500'"
+                         :style="'width: ' + (metrics.cpu?.percent || 0) + '%'"></div>
+                </div>
+                <!-- Per core indicator -->
+                <div class="flex gap-1.5 mt-3 pt-3 border-t border-slate-800/80">
+                    <template x-for="(core, idx) in (metrics.cpu?.per_core || [])" :key="idx">
+                        <div class="flex-1 bg-slate-900 rounded p-1 text-center">
+                            <span class="text-[10px] text-slate-400 font-mono block" x-text="'C' + idx"></span>
+                            <span class="text-[11px] font-mono font-semibold" :class="core > 75 ? 'text-amber-400' : 'text-slate-300'" x-text="core + '%'"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- RAM Card -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Memory RAM</span>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.ram?.total_gb || 12) + ' GB'"></span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.ram?.percent ?? 0) + '%'"></span>
+                    <span class="text-xs text-slate-400 font-mono" x-text="(metrics.ram?.used_gb ?? 0) + ' GB Used'"></span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
+                    <div class="h-2 rounded-full transition-all duration-500"
+                         :class="(metrics.ram?.percent > 85) ? 'bg-rose-500' : (metrics.ram?.percent > 75) ? 'bg-amber-500' : 'bg-emerald-500'"
+                         :style="'width: ' + (metrics.ram?.percent || 0) + '%'"></div>
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
+                    <span>Sisa Tersedia:</span>
+                    <span class="text-emerald-400 font-semibold" x-text="(metrics.ram?.available_gb ?? 0) + ' GB'"></span>
+                </div>
+            </div>
+
+            <!-- Disk Boot Volume Card -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Boot Disk (/)</span>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.disk?.total_gb || 46) + ' GB'"></span>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.disk?.percent ?? 0) + '%'"></span>
+                    <span class="text-xs text-slate-400 font-mono" x-text="(metrics.disk?.used_gb ?? 0) + ' GB Used'"></span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
+                    <div class="h-2 rounded-full transition-all duration-500"
+                         :class="(metrics.disk?.percent > 85) ? 'bg-rose-500' : (metrics.disk?.percent > 75) ? 'bg-amber-500' : 'bg-cyan-500'"
+                         :style="'width: ' + (metrics.disk?.percent || 0) + '%'"></div>
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
+                    <span>Ruang Bebas:</span>
+                    <span class="text-cyan-400 font-semibold" x-text="(metrics.disk?.free_gb ?? 0) + ' GB'"></span>
+                </div>
+            </div>
+
+            <!-- Network Throughput Card -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Network I/O</span>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">Ethernet</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                        <div class="text-[11px] text-slate-400 uppercase font-mono">Transmit &uarr;</div>
+                        <div class="text-xl font-bold font-mono text-white mt-0.5" x-text="(metrics.network?.tx_kbps || 0) + ' KB/s'"></div>
+                        <div class="text-[10px] text-slate-500 font-mono mt-0.5" x-text="'Total: ' + (metrics.network?.total_sent_mb || 0) + ' MB'"></div>
+                    </div>
+                    <div>
+                        <div class="text-[11px] text-slate-400 uppercase font-mono">Receive &darr;</div>
+                        <div class="text-xl font-bold font-mono text-white mt-0.5" x-text="(metrics.network?.rx_kbps || 0) + ' KB/s'"></div>
+                        <div class="text-[10px] text-slate-500 font-mono mt-0.5" x-text="'Total: ' + (metrics.network?.total_recv_mb || 0) + ' MB'"></div>
+                    </div>
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
+                    <span>Active Containers:</span>
+                    <span class="text-slate-200 font-semibold" x-text="(containers.running_count || 0) + ' / ' + (containers.total_count || 0)"></span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Real-Time Metrics Charts Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- CPU History Chart -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-semibold tracking-wide text-white">CPU UTILIZATION HISTORY</h2>
+                    <span class="text-xs text-slate-400 font-mono">Real-time (Interval 4s)</span>
+                </div>
+                <div class="h-56 relative">
+                    <canvas id="cpuChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Memory History Chart -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-semibold tracking-wide text-white">RAM UTILIZATION HISTORY</h2>
+                    <span class="text-xs text-slate-400 font-mono">Real-time (Interval 4s)</span>
+                </div>
+                <div class="h-56 relative">
+                    <canvas id="ramChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Grid: Docker Containers & Backup SLA Status -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Docker Fleet Manager (2 cols on desktop) -->
+            <div class="lg:col-span-2 bg-brand-800 border border-slate-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-sm font-semibold tracking-wide text-white">DOCKER CONTAINER FLEET</h2>
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-cyan-400 font-mono" x-text="(containers.running_count || 0) + ' Running'"></span>
+                    </div>
+                    <span class="text-xs text-slate-400 font-mono">Socket: /var/run/docker.sock</span>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="!containers.containers || containers.containers.length === 0" class="py-12 text-center text-slate-500">
+                    <p class="text-sm">Tidak ada kontainer Docker yang terdeteksi atau socket belum terhubung.</p>
+                </div>
+
+                <!-- Container Table -->
+                <div x-show="containers.containers && containers.containers.length > 0" class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="text-slate-400 border-b border-slate-800/80 uppercase font-mono text-[11px]">
+                                <th class="pb-3 pl-2">Container</th>
+                                <th class="pb-3">Status</th>
+                                <th class="pb-3">Health</th>
+                                <th class="pb-3">CPU</th>
+                                <th class="pb-3">RAM</th>
+                                <th class="pb-3 pr-2 text-right">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/50">
+                            <template x-for="c in containers.containers" :key="c.id">
+                                <tr class="hover:bg-slate-800/40 transition">
+                                    <!-- Container Name & Image -->
+                                    <td class="py-3 pl-2">
+                                        <div class="font-semibold text-slate-200" x-text="c.name"></div>
+                                        <div class="text-[11px] text-slate-500 font-mono truncate max-w-[180px]" x-text="c.image"></div>
+                                    </td>
+                                    <!-- Status -->
+                                    <td class="py-3">
+                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium"
+                                              :class="c.is_running ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60' : 'bg-slate-800 text-slate-400'">
+                                            <span class="w-1.5 h-1.5 rounded-full" :class="c.is_running ? 'bg-emerald-400' : 'bg-slate-500'"></span>
+                                            <span x-text="c.status"></span>
+                                        </span>
+                                    </td>
+                                    <!-- Health -->
+                                    <td class="py-3">
+                                        <span x-show="c.health === 'healthy'" class="text-cyan-400 font-mono text-[11px]">&bull; Healthy</span>
+                                        <span x-show="c.health !== 'healthy'" class="text-slate-500 font-mono text-[11px]" x-text="c.health === 'unknown' ? '-' : c.health"></span>
+                                    </td>
+                                    <!-- CPU % -->
+                                    <td class="py-3 font-mono text-slate-300" x-text="c.is_running ? (c.cpu_percent + '%') : '-'"></td>
+                                    <!-- RAM Usage -->
+                                    <td class="py-3 font-mono text-slate-300">
+                                        <div x-show="c.is_running">
+                                            <span x-text="c.memory.used_mb + ' MB'"></span>
+                                            <span class="text-[10px] text-slate-500" x-text="'(' + c.memory.percent + '%)'"></span>
+                                        </div>
+                                        <span x-show="!c.is_running">-</span>
+                                    </td>
+                                    <!-- Actions: Logs Modal Button (44px target) -->
+                                    <td class="py-3 pr-2 text-right">
+                                        <button @click="openLogsModal(c.name)"
+                                                class="px-2.5 py-1.5 rounded-lg bg-brand-700 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-300 border border-slate-700/70 text-xs font-mono transition focus:outline-none focus:ring-1 focus:ring-cyan-500">
+                                            Logs
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Backup & Healthcheck Card (1 col on desktop) -->
+            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                        <h2 class="text-sm font-semibold tracking-wide text-white">BACKUP & SLA INTEGRITY</h2>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono font-medium border"
+                              :class="backup.sla_healthy ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800' : 'bg-amber-950/60 text-amber-300 border-amber-800'"
+                              x-text="backup.status || 'CHECKING'"></span>
+                    </div>
+
+                    <!-- Backup Status Details -->
+                    <div class="space-y-3 text-xs">
+                        <div class="bg-slate-900/60 rounded-xl p-3 border border-slate-800/80">
+                            <div class="text-slate-400 mb-1">Status Kepatuhan SLA (Maks 26 Jam):</div>
+                            <div class="font-medium" :class="backup.sla_healthy ? 'text-emerald-300' : 'text-amber-300'" x-text="backup.message || '-'"></div>
+                        </div>
+
+                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
+                            <span class="text-slate-400">Berkas Cadangan Terbaru:</span>
+                            <span class="font-mono text-slate-200 font-semibold truncate max-w-[160px]" x-text="backup.latest_file || '-'"></span>
+                        </div>
+
+                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
+                            <span class="text-slate-400">Waktu Pembuatan:</span>
+                            <span class="font-mono text-slate-200" x-text="backup.latest_time || '-'"></span>
+                        </div>
+
+                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
+                            <span class="text-slate-400">Ukuran Berkas Dump:</span>
+                            <span class="font-mono text-cyan-400 font-semibold" x-text="(backup.size_mb || 0) + ' MB'"></span>
+                        </div>
+
+                        <div class="flex justify-between items-center py-2">
+                            <span class="text-slate-400">Total Arsip Tersimpan:</span>
+                            <span class="font-mono text-slate-200" x-text="(backup.total_files || 0) + ' files (' + (backup.total_size_mb || 0) + ' MB)'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Runbook note -->
+                <div class="mt-6 pt-4 border-t border-slate-800 text-[11px] text-slate-400">
+                    <p>Jadwal cron otomatis berjalan setiap hari pukul 02:00 WIB via <code class="text-cyan-400">/opt/scripts/backup.sh</code>.</p>
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- LOGS VIEWER MODAL (Accessible, closable via ESC or button)         -->
+    <!-- ================================================================= -->
+    <div x-cloak x-show="logsModalOpen" 
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+         @keydown.escape.window="logsModalOpen = false">
+        
+        <div class="w-full max-w-4xl bg-brand-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+             @click.outside="logsModalOpen = false">
+            
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-brand-850">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-cyan-400"></div>
+                    <h3 class="text-sm font-semibold text-white font-mono" x-text="'CONTAINER LOGS: ' + activeLogContainer"></h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="fetchContainerLogs(activeLogContainer)" 
+                            class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-300 transition">
+                        Reload
+                    </button>
+                    <button @click="logsModalOpen = false" 
+                            class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition focus:outline-none">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Body (Terminal-like text viewer) -->
+            <div class="p-4 bg-brand-900 flex-1 overflow-y-auto font-mono text-xs text-slate-300 leading-relaxed custom-scroll" id="logContentBox">
+                <div x-show="logsLoading" class="py-8 text-center text-slate-500">
+                    Memuat log kontainer terbaru...
+                </div>
+                <div x-show="!logsLoading && (!logsContent || logsContent.trim() === '')" class="py-8 text-center text-slate-500">
+                    Tidak ada baris log yang tersedia saat ini.
+                </div>
+                <pre x-show="!logsLoading && logsContent" x-text="logsContent" class="whitespace-pre-wrap select-text"></pre>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="px-5 py-3 border-t border-slate-800 bg-brand-800 flex justify-between items-center text-xs text-slate-400">
+                <span>Menampilkan hingga 60 baris log terakhir</span>
+                <button @click="logsModalOpen = false" 
+                        class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition">
+                    Tutup
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- JAVASCRIPT APP CONTROLLER (Alpine.js + Chart.js)                  -->
+    <!-- ================================================================= -->
+    <script>
+        function dashboardApp() {
+            return {
+                authenticated: {{ 'true' if is_authenticated else 'false' }},
+                pinInput: '',
+                pinError: '',
+                isAuthenticating: false,
+                isLoading: false,
+
+                // Data stores
+                metrics: {},
+                containers: { containers: [], running_count: 0, total_count: 0 },
+                backup: {},
+                health: {},
+
+                // Logs Modal
+                logsModalOpen: false,
+                activeLogContainer: '',
+                logsContent: '',
+                logsLoading: false,
+
+                // Charts
+                cpuChart: null,
+                ramChart: null,
+                chartTimeLabels: [],
+                cpuDataPoints: [],
+                ramDataPoints: [],
+
+                // PIN Methods
+                appendPin(num) {
+                    if (this.pinInput.length < 6) {
+                        this.pinInput += num;
+                        this.pinError = '';
+                        if (this.pinInput.length === 6) {
+                            this.submitPin();
+                        }
+                    }
+                },
+                backspacePin() {
+                    this.pinInput = this.pinInput.slice(0, -1);
+                    this.pinError = '';
+                },
+                clearPin() {
+                    this.pinInput = '';
+                    this.pinError = '';
+                },
+                async submitPin() {
+                    if (!this.pinInput) return;
+                    this.isAuthenticating = true;
+                    this.pinError = '';
+
+                    try {
+                        const res = await fetch('/api/verify-pin', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pin: this.pinInput })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                            this.authenticated = true;
+                            this.pinInput = '';
+                            this.$nextTick(() => {
+                                this.initCharts();
+                                this.fetchAllData();
+                            });
+                        } else {
+                            this.pinError = data.detail || 'PIN salah. Silakan coba lagi.';
+                            this.pinInput = '';
+                        }
+                    } catch (err) {
+                        this.pinError = 'Terjadi kesalahan koneksi saat verifikasi';
+                    } finally {
+                        this.isAuthenticating = false;
+                    }
+                },
+                async logout() {
+                    try {
+                        await fetch('/api/logout', { method: 'POST' });
+                    } catch (e) {}
+                    this.authenticated = false;
+                    this.pinInput = '';
+                },
+
+                // Dashboard Initializer
+                initDashboard() {
+                    if (this.authenticated) {
+                        this.$nextTick(() => {
+                            this.initCharts();
+                            this.fetchAllData();
+                        });
+                    }
+
+                    // Background polling every 4 seconds
+                    setInterval(() => {
+                        if (this.authenticated) {
+                            this.fetchMetricsAndHealth();
+                        }
+                    }, 4000);
+
+                    // Slower container & backup polling (every 12 seconds)
+                    setInterval(() => {
+                        if (this.authenticated) {
+                            this.fetchContainersAndBackup();
+                        }
+                    }, 12000);
+                },
+
+                // Charts setup
+                initCharts() {
+                    const cpuCtx = document.getElementById('cpuChart');
+                    const ramCtx = document.getElementById('ramChart');
+                    if (!cpuCtx || !ramCtx) return;
+
+                    const chartCommonOptions = {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: { duration: 300 },
+                        scales: {
+                            y: {
+                                min: 0,
+                                max: 100,
+                                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                ticks: {
+                                    color: '#94a3b8',
+                                    font: { family: 'monospace', size: 10 },
+                                    callback: v => v + '%'
+                                }
+                            },
+                            x: {
+                                grid: { display: false },
+                                ticks: {
+                                    color: '#64748b',
+                                    font: { family: 'monospace', size: 9 },
+                                    maxTicksLimit: 6
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: '#0f172a',
+                                titleFont: { family: 'monospace', size: 11 },
+                                bodyFont: { family: 'monospace', size: 12 },
+                                padding: 8,
+                                borderColor: '#334155',
+                                borderWidth: 1
+                            }
+                        }
+                    };
+
+                    this.cpuChart = new Chart(cpuCtx, {
+                        type: 'line',
+                        data: {
+                            labels: this.chartTimeLabels,
+                            datasets: [{
+                                data: this.cpuDataPoints,
+                                borderColor: '#06b6d4',
+                                backgroundColor: 'rgba(6, 182, 212, 0.08)',
+                                borderWidth: 2,
+                                tension: 0.3,
+                                fill: true,
+                                pointRadius: 2,
+                                pointBackgroundColor: '#06b6d4'
+                            }]
+                        },
+                        options: chartCommonOptions
+                    });
+
+                    this.ramChart = new Chart(ramCtx, {
+                        type: 'line',
+                        data: {
+                            labels: this.chartTimeLabels,
+                            datasets: [{
+                                data: this.ramDataPoints,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                                borderWidth: 2,
+                                tension: 0.3,
+                                fill: true,
+                                pointRadius: 2,
+                                pointBackgroundColor: '#10b981'
+                            }]
+                        },
+                        options: chartCommonOptions
+                    });
+                },
+
+                // Data Fetching
+                async fetchAllData() {
+                    this.isLoading = true;
+                    await Promise.all([
+                        this.fetchMetricsAndHealth(),
+                        this.fetchContainersAndBackup()
+                    ]);
+                    this.isLoading = false;
+                },
+
+                async fetchMetricsAndHealth() {
+                    try {
+                        const [mRes, hRes] = await Promise.all([
+                            fetch('/api/metrics'),
+                            fetch('/api/health')
+                        ]);
+
+                        if (mRes.status === 401 || hRes.status === 401) {
+                            this.authenticated = false;
+                            return;
+                        }
+
+                        if (mRes.ok) {
+                            this.metrics = await mRes.json();
+                            this.updateCharts(this.metrics);
+                        }
+                        if (hRes.ok) {
+                            this.health = await hRes.json();
+                        }
+                    } catch (e) {
+                        console.error('Error fetching metrics/health:', e);
+                    }
+                },
+
+                async fetchContainersAndBackup() {
+                    try {
+                        const [cRes, bRes] = await Promise.all([
+                            fetch('/api/containers'),
+                            fetch('/api/backup')
+                        ]);
+
+                        if (cRes.ok) this.containers = await cRes.json();
+                        if (bRes.ok) this.backup = await bRes.json();
+                    } catch (e) {
+                        console.error('Error fetching containers/backup:', e);
+                    }
+                },
+
+                updateCharts(metrics) {
+                    if (!this.cpuChart || !this.ramChart) return;
+
+                    const now = new Date();
+                    const timeStr = now.getHours().toString().padStart(2, '0') + ':' +
+                                    now.getMinutes().toString().padStart(2, '0') + ':' +
+                                    now.getSeconds().toString().padStart(2, '0');
+
+                    const maxPoints = 15;
+                    if (this.chartTimeLabels.length >= maxPoints) {
+                        this.chartTimeLabels.shift();
+                        this.cpuDataPoints.shift();
+                        this.ramDataPoints.shift();
+                    }
+
+                    this.chartTimeLabels.push(timeStr);
+                    this.cpuDataPoints.push(metrics.cpu?.percent ?? 0);
+                    this.ramDataPoints.push(metrics.ram?.percent ?? 0);
+
+                    this.cpuChart.update();
+                    this.ramChart.update();
+                },
+
+                // Logs Modal Operations
+                async openLogsModal(containerName) {
+                    this.activeLogContainer = containerName;
+                    this.logsModalOpen = true;
+                    await this.fetchContainerLogs(containerName);
+                },
+
+                async fetchContainerLogs(containerName) {
+                    this.logsLoading = true;
+                    try {
+                        const res = await fetch(`/api/containers/${encodeURIComponent(containerName)}/logs?tail=60`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.logsContent = data.logs || 'Tidak ada log yang dihasilkan.';
+                        } else {
+                            this.logsContent = 'Gagal mengambil log dari server.';
+                        }
+                    } catch (err) {
+                        this.logsContent = 'Error koneksi: ' + err.message;
+                    } finally {
+                        this.logsLoading = false;
+                        this.$nextTick(() => {
+                            const box = document.getElementById('logContentBox');
+                            if (box) box.scrollTop = box.scrollHeight;
+                        });
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

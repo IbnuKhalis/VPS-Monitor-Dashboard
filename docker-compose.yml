@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    container_name: vps-monitor-dashboard
+    restart: unless-stopped
+    environment:
+      - DASHBOARD_PIN=${DASHBOARD_PIN:-123456}
+      - SECRET_KEY=${SECRET_KEY:-vps-monitoring-secret-key-prod-random-89234}
+      - BACKUP_DIR=/opt/backups
+      - DOCKER_SOCKET=unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/backups:/opt/backups:ro
+    networks:
+      - proxy-network
+
+networks:
+  proxy-network:
+    external: true
