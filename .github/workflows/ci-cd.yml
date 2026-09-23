@@ -32,6 +32,10 @@ jobs:
           # exit-zero treats all errors as warnings
           flake8 . --count --exit-zero --max-complexity=15 --max-line-length=127 --statistics
 
+      - name: Run Unit & Contract Tests
+        run: |
+          python -m unittest discover -s tests -v
+
   deploy:
     name: Deploy to Production VPS
     needs: test

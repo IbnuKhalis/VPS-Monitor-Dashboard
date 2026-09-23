@@ -16,6 +16,8 @@ from app.services.metrics import get_system_metrics
 from app.services.docker_service import get_containers_summary, get_container_logs
 from app.services.backup_service import get_backup_status
 from app.services.healthcheck_service import evaluate_overall_health
+from app.services.service_catalog import get_service_catalog
+from app.services.kuma_service import get_kuma_status_summary
 
 app = FastAPI(
     title=settings.app_name,
@@ -38,16 +40,16 @@ class PinRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     auth_status = is_authenticated(request)
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "is_authenticated": auth_status,
-            "app_name": settings.app_name,
-            "app_version": settings.app_version,
-            "refresh_interval": settings.refresh_interval_seconds,
-        },
-    )
+    context = {
+        "request": request,
+        "is_authenticated": auth_status,
+        "app_name": settings.app_name,
+        "app_version": settings.app_version,
+        "refresh_interval": settings.refresh_interval_seconds,
+        "service_catalog": get_service_catalog() if auth_status else None,
+        "kuma_public_url": settings.kuma_public_url if auth_status else None,
+    }
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.post("/api/verify-pin")
@@ -104,6 +106,16 @@ async def api_backup():
 @app.get("/api/health", dependencies=[Depends(require_auth)])
 async def api_health():
     return evaluate_overall_health()
+
+
+@app.get("/api/services", dependencies=[Depends(require_auth)])
+async def api_services():
+    return get_service_catalog()
+
+
+@app.get("/api/kuma-summary", dependencies=[Depends(require_auth)])
+async def api_kuma_summary(refresh: bool = Query(default=False)):
+    return await get_kuma_status_summary(force_refresh=refresh)
 
 
 @app.get("/api/ping")

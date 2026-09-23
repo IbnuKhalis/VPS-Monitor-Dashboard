@@ -25,8 +25,11 @@ Sistem pemantauan (*monitoring*) dan visualisasi performa infrastruktur server V
    - Memeriksa file cadangan harian GFS di `/opt/backups/daily/`.
    - Menghitung usia backup terakhir (SLA batas aman <= 26 jam).
    - Menampilkan ringkasan ukuran dump database MySQL.
-6. **Pintasan Cepat Antar-Layanan**:
-   - Tautan langsung ke Gateway Utama (`digitalneeds.my.id`), Graduance (`graduance.digitalneeds.my.id`), dan Uptime Kuma (`status.digitalneeds.my.id`).
+6. **Pintasan Cepat & Direktori 9 Domain Kanonik**:
+   - Menampilkan 3 pintasan utama (`Gateway Utama`, `Graduance Portal`, `Halaman Status Publik`) serta direktori terstruktur untuk seluruh 9 domain produksi (`Situs dan aplikasi`, `Operasional`, `Integrasi dan API`) setelah autentikasi PIN ([`docs/service-shortcuts.md`](docs/service-shortcuts.md)).
+   - Respons `GET /` anonim disanitasi di sisi server sehingga tidak membocorkan shell dashboard maupun daftar domain internal sebelum PIN diverifikasi.
+7. **Ringkasan Status Publik Uptime Kuma**:
+   - Mengambil dan memvalidasi ringkasan status publik dari Uptime Kuma (`/api/status-page/default` dan `/api/status-page/heartbeat/default`) dengan *caching* 45 detik, batas waktu 3 detik, serta *fallback* aman `Tidak diketahui` (`UNKNOWN`) apabila Uptime Kuma tidak dapat dihubungi ([`docs/monitoring-integration.md`](docs/monitoring-integration.md)).
 
 ---
 
@@ -53,7 +56,7 @@ pip install -r requirements.txt
 # 3. Jalankan server lokal
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-Buka browser di `http://127.0.0.1:8000` dan masukkan PIN default: `123456`.
+Buka browser di `http://127.0.0.1:8000`. Untuk penggunaan di luar mesin lokal, atur `DASHBOARD_PIN` dan `SECRET_KEY` sendiri sebelum aplikasi dijalankan. Nilai bawaan di kode dan Compose saat ini hanya cocok untuk pengembangan lokal.
 
 ---
 
@@ -82,3 +85,24 @@ Buka browser di `http://127.0.0.1:8000` dan masukkan PIN default: `123456`.
    ```bash
    docker compose up -d --build
    ```
+
+## Cara memeriksa
+
+- `python -m compileall -q app` memeriksa sintaks Python.
+- `python -m unittest discover -s tests -v` menjalankan pengujian kontrak Uptime Kuma, katalog 9 domain, dan sanitasi respons anonim vs terautentikasi.
+- `docker compose config --quiet` memeriksa format konfigurasi Compose. Pemeriksaan ini tidak membuktikan bahwa konfigurasi aman untuk produksi.
+- Setelah aplikasi berjalan, `GET /api/ping` memeriksa respons proses HTTP. Periksa metrik, status backup, dan daftar kontainer secara terpisah pada host tujuan sebelum mengandalkannya.
+
+## Acuan proyek
+
+- [`docs/monitoring-integration.md`](docs/monitoring-integration.md) berisi hasil penyelidikan rute Uptime Kuma dan arahan integrasi untuk Antigravity.
+- [`docs/service-shortcuts.md`](docs/service-shortcuts.md) berisi inventaris domain aktif dan kriteria pintasan semua layanan.
+
+- [`anti-slop/audit-001-2026-09-09.md`](anti-slop/audit-001-2026-09-09.md) dan [`anti-slop/audit-002-2026-09-09.md`](anti-slop/audit-002-2026-09-09.md) berisi audit antarmuka sebelumnya dan tindak lanjutnya.
+- [`AGENTS.md`](AGENTS.md) memuat aturan universal agent; [`.agents/rules/master-mind.md`](.agents/rules/master-mind.md) menghubungkannya ke Antigravity.
+
+## Aturan khusus proyek
+
+- Pertahankan stack FastAPI, template HTML, Alpine.js, Chart.js, Docker Compose, dan jaringan proxy eksternal selama tidak ada keputusan arsitektur baru.
+- Sumber data yang dituju adalah host VPS, Docker Engine, dan direktori backup `/opt/backups`. Validasi bahwa setiap metrik benar-benar mewakili host sebelum dipakai untuk keputusan operasional.
+- Perubahan deployment harus mempertimbangkan workflow [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml), yang mendeploy setiap push ke `main` setelah pemeriksaan lint.
