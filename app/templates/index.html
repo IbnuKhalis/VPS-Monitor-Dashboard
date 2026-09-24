@@ -4,8 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VPS Mission Control // digitalneeds.my.id</title>
+    <!-- Google Fonts: Outfit (Editorial Display/UI) & JetBrains Mono (Telemetry Tabular) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- GSAP 3.12 Motion Engine -->
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
     <!-- Alpine.js -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
     <!-- Chart.js -->
@@ -17,9 +23,11 @@
                 extend: {
                     colors: {
                         brand: {
+                            950: '#04070d',
                             900: '#070b14',
-                            800: '#0b1120',
-                            700: '#111a2e',
+                            850: '#090e1a',
+                            800: '#0b1221',
+                            700: '#121c32',
                             600: '#1e293b',
                             500: '#334155'
                         },
@@ -31,7 +39,8 @@
                         }
                     },
                     fontFamily: {
-                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+                        sans: ['Outfit', 'system-ui', '-apple-system', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Consolas', 'monospace']
                     }
                 }
             }
@@ -39,84 +48,100 @@
     </script>
     <style>
         [x-cloak] { display: none !important; }
-        /* Smooth scrollbar for log viewer */
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+        .bg-tech-grid {
+            background-image: radial-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        .bento-surface {
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.82) 0%, rgba(11, 18, 33, 0.94) 100%);
+            box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.05) inset, 0 20px 40px -24px rgba(2, 6, 23, 0.85);
+        }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #0b1120; }
+        .custom-scroll::-webkit-scrollbar-track { background: #070b14; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
     </style>
 </head>
-<body class="bg-brand-900 text-slate-200 min-h-screen font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200"
+<body class="bg-brand-950 text-slate-200 min-h-screen font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200 relative"
       x-data="dashboardApp()"
       x-init="initDashboard()"
       @keydown.window="handleKeydown($event)">
+
+    <!-- Ambient Deep Radial Wash & Technical Grid Surface -->
+    <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden" aria-hidden="true">
+        <div class="absolute -top-40 left-1/4 w-[38rem] h-[38rem] bg-cyan-500/[0.05] rounded-full blur-[130px]"></div>
+        <div class="absolute top-1/3 right-1/4 w-[32rem] h-[32rem] bg-emerald-500/[0.04] rounded-full blur-[130px]"></div>
+        <div class="absolute inset-0 bg-tech-grid opacity-80"></div>
+    </div>
 
     {% if not is_authenticated %}
     <!-- ================================================================= -->
     <!-- PIN AUTHENTICATION OVERLAY (Rendered only when unauthenticated)   -->
     <!-- ================================================================= -->
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-brand-900/95 backdrop-blur-md px-4">
-        <div class="w-full max-w-sm bg-brand-800 border border-slate-700/80 rounded-2xl p-6 shadow-2xl relative overflow-hidden"
+    <main class="overflow-x-hidden w-full max-w-full min-h-screen flex items-center justify-center px-4 py-10 relative z-10">
+        <div class="w-full max-w-md bento-surface border border-slate-700/80 rounded-3xl p-7 sm:p-8 shadow-2xl relative overflow-hidden"
              @keydown.escape.window="pinInput = ''">
-            
-            <div class="text-center mb-6">
-                <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 text-cyan-400 mb-3">
+
+            <div class="text-center mb-7">
+                <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-slate-900 border border-cyan-500/30 text-cyan-400 mb-4 shadow-inner">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                     </svg>
                 </div>
-                <h2 class="text-lg font-bold text-white tracking-wide">VPS MISSION CONTROL</h2>
-                <p class="text-xs text-slate-400 mt-1">Masukkan PIN untuk membuka dashboard produksi</p>
+                <div class="text-[11px] font-mono uppercase tracking-[0.2em] text-cyan-400 mb-1">Zero-Trust Access Gate</div>
+                <h1 class="text-2xl font-bold text-white tracking-tight">VPS MISSION CONTROL</h1>
+                <p class="text-xs text-slate-400 mt-1.5">Masukkan PIN untuk membuka dashboard produksi</p>
             </div>
 
             <!-- PIN Display -->
-            <div class="mb-5 flex justify-center gap-2">
+            <div class="mb-6 flex justify-center gap-2.5">
                 <template x-for="i in 6" :key="i">
-                    <div class="w-10 h-12 rounded-lg border flex items-center justify-center text-xl font-mono font-bold transition-all"
-                         :class="pinInput.length >= i ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300' : 'border-slate-700 bg-slate-900/60 text-slate-500'">
+                    <div class="w-11 h-13 py-3 rounded-xl border flex items-center justify-center text-xl font-mono font-bold transition-all duration-200"
+                         :class="pinInput.length >= i ? 'border-cyan-400 bg-cyan-950/50 text-cyan-300 shadow-sm shadow-cyan-500/20' : 'border-slate-700/90 bg-slate-900/70 text-slate-500'">
                         <span x-text="pinInput.length >= i ? '•' : ''"></span>
                     </div>
                 </template>
             </div>
 
             <!-- Error message -->
-            <div x-show="pinError" class="mb-4 text-center">
-                <span class="text-xs font-medium text-rose-400 bg-rose-950/40 border border-rose-800/60 px-3 py-1 rounded-full" x-text="pinError"></span>
+            <div x-show="pinError" class="mb-5 text-center">
+                <span class="inline-block text-xs font-medium text-rose-300 bg-rose-950/60 border border-rose-800/80 px-3.5 py-1.5 rounded-full" x-text="pinError"></span>
             </div>
 
-            <!-- Keypad Buttons (44px+ tap targets) -->
-            <div class="grid grid-cols-3 gap-2 mb-4">
+            <!-- Keypad Buttons (52px+ tap targets) -->
+            <div class="grid grid-cols-3 gap-2.5 mb-5">
                 <template x-for="num in ['1', '2', '3', '4', '5', '6', '7', '8', '9']" :key="num">
-                    <button @click="appendPin(num)" 
+                    <button @click="appendPin(num)"
                             type="button"
-                            class="min-h-[48px] rounded-xl bg-brand-700/80 hover:bg-slate-700 active:scale-95 text-lg font-semibold text-slate-100 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            class="min-h-[52px] rounded-xl bg-brand-700/85 hover:bg-slate-700/90 active:scale-95 text-lg font-mono font-semibold text-white transition border border-slate-700/60 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
                         <span x-text="num"></span>
                     </button>
                 </template>
-                <button @click="clearPin()" 
+                <button @click="clearPin()"
                         type="button"
-                        class="min-h-[48px] rounded-xl bg-brand-700/40 hover:bg-rose-950/40 text-xs font-semibold text-rose-400 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-rose-500">
+                        class="min-h-[52px] rounded-xl bg-slate-900/80 hover:bg-rose-950/50 text-xs font-mono font-semibold text-rose-300 transition border border-slate-800 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-rose-500">
                     CLEAR
                 </button>
-                <button @click="appendPin('0')" 
+                <button @click="appendPin('0')"
                         type="button"
-                        class="min-h-[48px] rounded-xl bg-brand-700/80 hover:bg-slate-700 active:scale-95 text-lg font-semibold text-slate-100 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        class="min-h-[52px] rounded-xl bg-brand-700/85 hover:bg-slate-700/90 active:scale-95 text-lg font-mono font-semibold text-white transition border border-slate-700/60 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
                     0
                 </button>
-                <button @click="backspacePin()" 
+                <button @click="backspacePin()"
                         type="button"
-                        class="min-h-[48px] rounded-xl bg-brand-700/40 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition border border-slate-700/50 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        class="min-h-[52px] rounded-xl bg-slate-900/80 hover:bg-slate-800 text-xs font-mono font-semibold text-slate-300 transition border border-slate-800 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-cyan-500">
                     DEL
                 </button>
             </div>
 
-            <!-- Direct Submit Button -->
-            <button @click="submitPin()" 
+            <!-- Direct Submit Button (High Contrast Dark-on-Cyan) -->
+            <button @click="submitPin()"
                     :disabled="pinInput.length < 4 || isAuthenticating"
-                    class="w-full min-h-[44px] rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:hover:bg-cyan-600 text-sm font-semibold text-white transition flex items-center justify-center gap-2 shadow-lg shadow-cyan-950 focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                    class="w-full min-h-[48px] rounded-xl bg-cyan-400 hover:bg-cyan-300 disabled:opacity-40 disabled:hover:bg-cyan-400 text-sm font-bold text-slate-950 transition flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50 focus:outline-none focus:ring-2 focus:ring-cyan-300">
                 <span x-show="!isAuthenticating">Buka Dashboard</span>
                 <span x-show="isAuthenticating" class="inline-flex items-center gap-2">
-                    <svg class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                    <svg class="animate-spin h-4 w-4 text-slate-950" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
@@ -124,544 +149,562 @@
                 </span>
             </button>
         </div>
-    </div>
+    </main>
     {% endif %}
 
     {% if is_authenticated %}
     <!-- ================================================================= -->
     <!-- MAIN DASHBOARD CONTENT (Rendered only when authenticated)         -->
     <!-- ================================================================= -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <main class="overflow-x-hidden w-full max-w-full relative z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7">
 
-        <!-- Top Navigation & Header -->
-        <header class="flex flex-col md:flex-row md:items-center md:justify-between pb-6 border-b border-slate-800 gap-4">
-            <div class="flex items-center gap-3">
-                <div class="h-10 w-10 rounded-xl bg-cyan-950/80 border border-cyan-700/60 flex items-center justify-center text-cyan-400 font-mono font-bold text-lg">
-                    DN
-                </div>
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h1 class="text-xl font-bold tracking-tight text-white">digitalneeds.my.id</h1>
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border"
-                              :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800' : 'bg-amber-950/60 text-amber-300 border-amber-800'">
-                            <span class="w-2 h-2 rounded-full animate-pulse"
-                                  :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-400' : 'bg-amber-400'"></span>
-                            <span x-text="health.overall_status || 'CHECKING'"></span>
-                        </span>
-                    </div>
-                    <p class="text-xs text-slate-400 font-mono mt-0.5">
-                        <span x-text="metrics.hostname || 'vps-main'"></span> &bull; 
-                        <span x-text="metrics.arch || 'aarch64'"></span> &bull; 
-                        Uptime: <span class="text-slate-200 font-medium" x-text="metrics.uptime?.formatted || '-'"></span>
-                    </p>
-                </div>
-            </div>
+            <!-- ========================================================= -->
+            <!-- 1. FLOATING GLASS PILL NAVIGATION BAR                     -->
+            <!-- ========================================================= -->
+            <nav aria-label="Navigasi Utama Mission Control"
+                 class="sticky top-3 z-40 mb-7 rounded-2xl bg-brand-800/85 backdrop-blur-xl border border-slate-700/80 px-4 sm:px-5 py-3 shadow-2xl shadow-black/60 flex flex-wrap items-center justify-between gap-3">
 
-            <!-- Controls and shortcuts -->
-            <div class="flex flex-wrap items-center gap-2 sm:gap-3">
-                <!-- Timestamp badge -->
-                <div class="text-xs font-mono text-slate-400 bg-brand-800 px-3 py-1.5 rounded-lg border border-slate-800">
-                    <span x-text="metrics.timestamp || '-'"></span>
-                </div>
-
-                <!-- Toggle All Services Directory -->
-                <button @click="showAllServices = !showAllServices"
-                        type="button"
-                        class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-800 hover:bg-brand-700 active:scale-95 text-xs font-medium text-cyan-300 border border-cyan-800/60 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
-                    </svg>
-                    <span x-text="showAllServices ? 'Tutup Direktori (9)' : 'Semua Layanan (9 Domain)'"></span>
-                </button>
-
-                <!-- Manual refresh button -->
-                <button @click="fetchAllData()" 
-                        :disabled="isLoading"
-                        class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-700 hover:bg-slate-700 active:scale-95 text-xs font-medium text-slate-200 border border-slate-700/80 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                    <svg class="w-4 h-4" :class="{'animate-spin': isLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
-                    Refresh
-                </button>
-
-                <!-- Logout / Lock -->
-                <button @click="logout()" 
-                        class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-700/60 hover:bg-rose-950/40 text-xs font-medium text-slate-300 hover:text-rose-300 border border-slate-700/80 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-rose-500">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                    </svg>
-                    Kunci
-                </button>
-            </div>
-        </header>
-
-        <!-- Primary Quick Links (3 Core Destinations) -->
-        <div class="my-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <a href="https://digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
-               class="min-h-[48px] flex items-center justify-between p-3.5 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                <!-- Brand & Live Host Status -->
                 <div class="flex items-center gap-3">
-                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-cyan-400 border border-slate-700/80 text-xs font-mono font-bold">WEB</span>
+                    <div class="h-10 w-10 rounded-xl bg-cyan-950/90 border border-cyan-500/40 flex items-center justify-center text-cyan-300 font-mono font-bold text-sm tracking-wider shadow-inner">
+                        DN
+                    </div>
                     <div>
-                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Gateway Utama</div>
-                        <div class="text-[11px] text-slate-400 font-mono">digitalneeds.my.id</div>
-                    </div>
-                </div>
-                <span class="text-xs text-slate-400 group-hover:text-slate-200 font-mono">&nearr;</span>
-            </a>
-
-            <a href="https://graduance.digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
-               class="min-h-[48px] flex items-center justify-between p-3.5 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                <div class="flex items-center gap-3">
-                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-cyan-400 border border-slate-700/80 text-xs font-mono font-bold">APP</span>
-                    <div>
-                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Graduance Portal</div>
-                        <div class="text-[11px] text-slate-400 font-mono">graduance.digitalneeds.my.id</div>
-                    </div>
-                </div>
-                <span class="text-xs text-slate-400 group-hover:text-slate-200 font-mono">&nearr;</span>
-            </a>
-
-            <a href="https://status.digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
-               class="min-h-[48px] flex items-center justify-between p-3.5 rounded-xl bg-brand-800/80 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition group focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                <div class="flex items-center gap-3">
-                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg border text-xs font-mono font-bold"
-                          :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-950/60 text-rose-300 border-rose-800/70' : 'bg-slate-800 text-slate-300 border-slate-700'">
-                        SLA
-                    </span>
-                    <div>
-                        <div class="text-xs font-semibold text-slate-200 group-hover:text-cyan-400 transition">Halaman Status Publik</div>
-                        <div class="text-[11px] text-slate-400 font-mono">status.digitalneeds.my.id</div>
-                    </div>
-                </div>
-                <span class="text-xs text-slate-400 group-hover:text-slate-200 font-mono">&nearr;</span>
-            </a>
-        </div>
-
-        <!-- Categorized Directory of All 9 Active Domains -->
-        <section x-show="showAllServices" x-transition class="mb-6 bg-brand-800 border border-slate-800 rounded-2xl p-5" aria-label="Direktori Semua Layanan">
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-4 border-b border-slate-800">
-                <div>
-                    <h2 class="text-sm font-semibold tracking-wide text-white uppercase">Direktori Layanan Aktif (9 Domain Kanonik)</h2>
-                    <p class="text-xs text-slate-400 mt-0.5">Daftar domain produksi berdasarkan inventaris infrastruktur. Tautan ini menunjukkan jenis akses dan bukan indikator status online.</p>
-                </div>
-                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono bg-slate-900 text-cyan-300 border border-slate-800">
-                    {{ service_catalog.total if service_catalog else 9 }} Domain Terdaftar
-                </span>
-            </div>
-
-            {% if service_catalog %}
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                {% for category in service_catalog.categories %}
-                <div class="bg-slate-900/50 border border-slate-800/90 rounded-xl p-4 flex flex-col">
-                    <div class="mb-3 pb-2 border-b border-slate-800/80">
-                        <h3 class="text-xs font-semibold uppercase tracking-wider text-cyan-400">{{ category.name }}</h3>
-                        <p class="text-[11px] text-slate-400 mt-0.5">{{ category.description }}</p>
-                    </div>
-                    <div class="space-y-2.5 flex-1">
-                        {% for svc in category.services %}
-                        {% if svc.is_current %}
-                        <div aria-current="page"
-                             class="min-h-[48px] p-3 rounded-xl bg-cyan-950/25 border border-cyan-800/60 flex items-start justify-between gap-2">
-                            <div class="min-w-0">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-xs font-semibold text-white">{{ svc.name }}</span>
-                                    <span class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-cyan-900/60 text-cyan-200 border border-cyan-700/60">
-                                        Dashboard ini
-                                    </span>
-                                </div>
-                                <div class="text-[11px] font-mono text-cyan-300/90 mt-0.5 truncate">{{ svc.domain }}</div>
-                                <p class="text-[11px] text-slate-300 mt-1 leading-snug">{{ svc.role }}</p>
-                            </div>
-                            <span class="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                                {{ svc.access_label }}
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-sm sm:text-base font-bold tracking-tight text-white">digitalneeds.my.id</span>
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold border"
+                                  :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/80' : 'bg-amber-950/70 text-amber-300 border-amber-700/80'">
+                                <span class="w-1.5 h-1.5 rounded-full animate-pulse"
+                                      :class="health.overall_status === 'HEALTHY' ? 'bg-emerald-400' : 'bg-amber-400'"></span>
+                                <span x-text="health.overall_status || 'CHECKING'"></span>
                             </span>
                         </div>
-                        {% else %}
-                        <a href="{{ svc.url }}" target="_blank" rel="noopener noreferrer"
-                           class="min-h-[48px] p-3 rounded-xl bg-brand-800/90 hover:bg-brand-700/80 border border-slate-800 hover:border-slate-700 transition flex items-start justify-between gap-2 group focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                            <div class="min-w-0">
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-xs font-semibold text-slate-200 group-hover:text-cyan-300 transition">{{ svc.name }}</span>
-                                    <span class="text-xs text-slate-400 group-hover:text-cyan-300 font-mono">&nearr;</span>
-                                </div>
-                                <div class="text-[11px] font-mono text-slate-400 mt-0.5 truncate">{{ svc.domain }}</div>
-                                <p class="text-[11px] text-slate-400 mt-1 leading-snug">{{ svc.role }}</p>
-                            </div>
-                            <span class="shrink-0 px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 text-slate-300 border border-slate-700/80">
-                                {{ svc.access_label }}
-                            </span>
-                        </a>
-                        {% endif %}
-                        {% endfor %}
+                        <div class="text-[11px] text-slate-400 font-mono tabular-nums">
+                            <span x-text="metrics.hostname || 'vps-main'"></span> &bull;
+                            <span x-text="metrics.arch || 'aarch64'"></span> &bull;
+                            <span x-text="metrics.timestamp || '-'"></span>
+                        </div>
                     </div>
                 </div>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </section>
 
-        <!-- Uptime Kuma Public Status Summary Card -->
-        <section class="mb-6 bg-brand-800 border border-slate-800 rounded-2xl p-5" aria-label="Ringkasan Status Publik Uptime Kuma">
-            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-800">
-                <div class="flex flex-wrap items-center gap-3">
-                    <div>
-                        <div class="flex items-center gap-2.5 flex-wrap">
-                            <h2 class="text-sm font-semibold tracking-wide text-white uppercase">Status Layanan Publik (Uptime Kuma)</h2>
-                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium border"
-                                  :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-950/60 text-rose-300 border-rose-800' : kuma.overall_status === 'MAINTENANCE' ? 'bg-amber-950/60 text-amber-300 border-amber-800' : 'bg-slate-800 text-slate-300 border-slate-700'">
-                                <span class="w-2 h-2 rounded-full"
-                                      :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-400' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-400' : kuma.overall_status === 'MAINTENANCE' ? 'bg-amber-400' : 'bg-slate-400'"></span>
-                                <span x-text="kuma.overall_label || 'Tidak diketahui'"></span>
-                            </span>
-                            <span class="text-xs font-mono px-2.5 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-800"
-                                  x-text="(kuma.up_monitors ?? 0) + ' / ' + (kuma.total_monitors ?? 0) + ' Monitor Sehat'"></span>
+                <!-- Action Controls (44px+ Touch Targets) -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <button @click="showAllServices = !showAllServices"
+                            type="button"
+                            class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 text-xs font-semibold text-cyan-300 border border-cyan-800/60 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                        <span x-text="showAllServices ? 'Sembunyikan Direktori (9)' : 'Semua Layanan (9 Domain)'"></span>
+                    </button>
+
+                    <button @click="fetchAllData()"
+                            :disabled="isLoading"
+                            type="button"
+                            class="min-h-[44px] px-3.5 py-2 rounded-xl bg-brand-700 hover:bg-slate-700 active:scale-95 text-xs font-semibold text-slate-100 border border-slate-700 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        <svg class="w-4 h-4" :class="{'animate-spin': isLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span>Refresh</span>
+                    </button>
+
+                    <button @click="logout()"
+                            type="button"
+                            class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-rose-950/60 text-xs font-semibold text-slate-300 hover:text-rose-200 border border-slate-700/80 hover:border-rose-800 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-rose-500">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                        <span>Kunci</span>
+                    </button>
+                </div>
+            </nav>
+
+            <!-- ========================================================= -->
+            <!-- 2. EDITORIAL SPLIT HERO & 3 PRIMARY DESTINATIONS          -->
+            <!-- ========================================================= -->
+            <section class="hero-surface mb-7 bento-surface border border-slate-800/90 rounded-3xl p-6 sm:p-8">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                    <!-- Editorial Wide Heading (Max 2 Lines Iron Rule) -->
+                    <div class="lg:col-span-7 max-w-4xl">
+                        <div class="inline-flex items-center gap-2 text-xs font-mono text-cyan-400 mb-2">
+                            <span>OCI AMPERE ARM64</span>
+                            <span>&bull;</span>
+                            <span>UPTIME: <strong class="text-white tabular-nums" x-text="metrics.uptime?.formatted || '-'"></strong></span>
                         </div>
-                        <p class="text-xs text-slate-400 mt-1">
-                            Sumber data: endpoint publik <code class="text-cyan-400 font-mono">/api/status-page/default</code> &bull;
-                            Pembaruan: <span class="font-mono text-slate-300" x-text="kuma.last_updated || '-'"></span>
+                        <h1 class="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white leading-tight">
+                            Pusat Kendali Infrastruktur &amp; Observabilitas Produksi
+                        </h1>
+                        <p class="text-xs sm:text-sm text-slate-300 mt-2.5 max-w-2xl leading-relaxed">
+                            Telemetri real-time host <span class="font-mono text-cyan-300">vps-main</span>, inspeksi armada 10 kontainer Docker, kepatuhan cadangan GFS, serta status publik terverifikasi.
                         </p>
                     </div>
-                </div>
 
-                <div class="flex flex-wrap items-center gap-2.5">
-                    <a :href="kuma.public_url || 'https://status.digitalneeds.my.id'"
-                       target="_blank" rel="noopener noreferrer"
-                       class="min-h-[44px] px-3.5 py-2 rounded-lg bg-brand-700 hover:bg-slate-700 text-xs font-medium text-slate-200 border border-slate-700 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                        <span>Halaman Status Publik</span>
-                        <span class="font-mono text-slate-400">&nearr;</span>
-                    </a>
-                    <a :href="kuma.admin_url || 'https://status.digitalneeds.my.id/dashboard'"
-                       target="_blank" rel="noopener noreferrer"
-                       class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-xs font-medium text-slate-300 border border-slate-800 transition inline-flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                        <span>Kuma Admin</span>
-                        <span class="font-mono text-slate-400">&nearr;</span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Fallback warning when Uptime Kuma is unreachable or returns invalid data -->
-            <div x-show="!kuma.available" class="mt-4 p-3.5 rounded-xl bg-slate-900/80 border border-slate-700/80 flex items-center justify-between gap-3 text-xs text-slate-300">
-                <div>
-                    <span class="font-semibold text-amber-300">Status Tidak Diketahui:</span>
-                    <span x-text="kuma.error || 'Tidak dapat memuat ringkasan monitor dari Uptime Kuma.'"></span>
-                </div>
-                <span class="font-mono text-[11px] text-slate-400 shrink-0">Fallback Aman</span>
-            </div>
-
-            <!-- Alert banner if any monitor is degraded/down -->
-            <div x-show="kuma.available && kuma.degraded_monitors && kuma.degraded_monitors.length > 0"
-                 class="mt-4 p-3.5 rounded-xl bg-rose-950/30 border border-rose-800/70 text-xs text-rose-200">
-                <div class="font-semibold mb-1">Perhatian: Terdapat layanan yang memerlukan pemeriksaan</div>
-                <div class="flex flex-wrap gap-2 mt-1.5">
-                    <template x-for="dm in (kuma.degraded_monitors || [])" :key="dm.id">
-                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-950/70 border border-rose-800 text-rose-200 font-mono text-[11px]">
-                            <span x-text="dm.name"></span>
-                            <span>&bull;</span>
-                            <span x-text="dm.label"></span>
-                        </span>
-                    </template>
-                </div>
-            </div>
-
-            <!-- Public Monitors Grid -->
-            <div x-show="kuma.available && kuma.monitors && kuma.monitors.length > 0"
-                 class="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <template x-for="m in (kuma.monitors || [])" :key="m.id">
-                    <div class="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800/90 flex flex-col justify-between gap-2">
-                        <div class="flex items-start justify-between gap-2">
-                            <div class="min-w-0">
-                                <div class="text-xs font-semibold text-slate-200 truncate" x-text="m.name"></div>
-                                <div class="text-[11px] text-slate-400 truncate" x-text="m.group"></div>
+                    <!-- 3 Primary Quick Links -->
+                    <div class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-2.5">
+                        <a href="https://digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
+                           class="min-h-[50px] flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-cyan-300 border border-slate-700 text-xs font-mono font-bold">WEB</span>
+                                <div class="min-w-0">
+                                    <div class="text-xs font-bold text-white group-hover:text-cyan-300 transition truncate">Gateway Utama</div>
+                                    <div class="text-[11px] text-slate-400 font-mono truncate">digitalneeds.my.id</div>
+                                </div>
                             </div>
-                            <span class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium border"
-                                  :class="m.status === 'UP' ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70' : m.status === 'DOWN' ? 'bg-rose-950/60 text-rose-300 border-rose-800/70' : 'bg-slate-800 text-slate-300 border-slate-700'">
-                                <span class="w-1.5 h-1.5 rounded-full"
-                                      :class="m.status === 'UP' ? 'bg-emerald-400' : m.status === 'DOWN' ? 'bg-rose-400' : 'bg-slate-400'"></span>
-                                <span x-text="m.label"></span>
-                            </span>
-                        </div>
-                        <div class="flex items-center justify-between pt-2 border-t border-slate-800/70 text-[11px] font-mono text-slate-400">
-                            <span>Uptime 24j: <strong class="text-slate-200" x-text="m.uptime_24h_pct !== null && m.uptime_24h_pct !== undefined ? (m.uptime_24h_pct + '%') : '-'"></strong></span>
-                            <span x-text="m.ping_ms !== null && m.ping_ms !== undefined ? (m.ping_ms + ' ms') : '-'"></span>
-                        </div>
+                            <span class="text-xs text-slate-400 group-hover:text-cyan-300 group-hover:translate-x-0.5 transition-transform font-mono">&nearr;</span>
+                        </a>
+
+                        <a href="https://graduance.digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
+                           class="min-h-[50px] flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-800 text-cyan-300 border border-slate-700 text-xs font-mono font-bold">APP</span>
+                                <div class="min-w-0">
+                                    <div class="text-xs font-bold text-white group-hover:text-cyan-300 transition truncate">Graduance Portal</div>
+                                    <div class="text-[11px] text-slate-400 font-mono truncate">graduance.digitalneeds.my.id</div>
+                                </div>
+                            </div>
+                            <span class="text-xs text-slate-400 group-hover:text-cyan-300 group-hover:translate-x-0.5 transition-transform font-mono">&nearr;</span>
+                        </a>
+
+                        <a href="https://status.digitalneeds.my.id" target="_blank" rel="noopener noreferrer"
+                           class="min-h-[50px] flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg border text-xs font-mono font-bold"
+                                      :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/70' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-950/70 text-rose-300 border-rose-700/70' : 'bg-slate-800 text-slate-300 border-slate-700'">
+                                    SLA
+                                </span>
+                                <div class="min-w-0">
+                                    <div class="text-xs font-bold text-white group-hover:text-cyan-300 transition truncate">Halaman Status Publik</div>
+                                    <div class="text-[11px] text-slate-400 font-mono truncate">status.digitalneeds.my.id</div>
+                                </div>
+                            </div>
+                            <span class="text-xs text-slate-400 group-hover:text-cyan-300 group-hover:translate-x-0.5 transition-transform font-mono">&nearr;</span>
+                        </a>
                     </div>
-                </template>
-            </div>
-        </section>
+                </div>
+            </section>
 
-        <!-- Metric Stat Cards (4 Columns) -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            
-            <!-- CPU Card -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
-                <div class="flex items-center justify-between mb-3">
-                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">CPU Load (2 OCPU)</span>
-                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.cpu?.cores || 2) + ' Cores'"></span>
-                </div>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.cpu?.percent ?? 0) + '%'"></span>
-                    <span class="text-xs text-slate-400 font-mono" x-show="metrics.cpu?.freq_mhz" x-text="(metrics.cpu?.freq_mhz || 0) + ' MHz'"></span>
-                </div>
-                <!-- Progress Bar -->
-                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
-                    <div class="h-2 rounded-full transition-all duration-500"
-                         :class="(metrics.cpu?.percent > 80) ? 'bg-rose-500' : (metrics.cpu?.percent > 60) ? 'bg-amber-500' : 'bg-cyan-500'"
-                         :style="'width: ' + (metrics.cpu?.percent || 0) + '%'"></div>
-                </div>
-                <!-- Per core indicator -->
-                <div class="flex gap-1.5 mt-3 pt-3 border-t border-slate-800/80">
-                    <template x-for="(core, idx) in (metrics.cpu?.per_core || [])" :key="idx">
-                        <div class="flex-1 bg-slate-900 rounded p-1 text-center">
-                            <span class="text-[10px] text-slate-400 font-mono block" x-text="'C' + idx"></span>
-                            <span class="text-[11px] font-mono font-semibold" :class="core > 75 ? 'text-amber-400' : 'text-slate-300'" x-text="core + '%'"></span>
-                        </div>
-                    </template>
-                </div>
-            </div>
+            <!-- ========================================================= -->
+            <!-- 3. 12-COLUMN GAPLESS BENTO GRID (grid-flow-dense)         -->
+            <!-- ========================================================= -->
+            <div class="grid grid-cols-1 md:grid-cols-6 lg:grid-cols-12 grid-flow-dense gap-4 lg:gap-5">
 
-            <!-- RAM Card -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
-                <div class="flex items-center justify-between mb-3">
-                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Memory RAM</span>
-                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.ram?.total_gb || 12) + ' GB'"></span>
-                </div>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.ram?.percent ?? 0) + '%'"></span>
-                    <span class="text-xs text-slate-400 font-mono" x-text="(metrics.ram?.used_gb ?? 0) + ' GB Used'"></span>
-                </div>
-                <!-- Progress Bar -->
-                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
-                    <div class="h-2 rounded-full transition-all duration-500"
-                         :class="(metrics.ram?.percent > 85) ? 'bg-rose-500' : (metrics.ram?.percent > 75) ? 'bg-amber-500' : 'bg-emerald-500'"
-                         :style="'width: ' + (metrics.ram?.percent || 0) + '%'"></div>
-                </div>
-                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
-                    <span>Sisa Tersedia:</span>
-                    <span class="text-emerald-400 font-semibold" x-text="(metrics.ram?.available_gb ?? 0) + ' GB'"></span>
-                </div>
-            </div>
-
-            <!-- Disk Boot Volume Card -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
-                <div class="flex items-center justify-between mb-3">
-                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Boot Disk (/)</span>
-                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="(metrics.disk?.total_gb || 46) + ' GB'"></span>
-                </div>
-                <div class="flex items-baseline gap-2">
-                    <span class="text-3xl font-bold font-mono text-white" x-text="(metrics.disk?.percent ?? 0) + '%'"></span>
-                    <span class="text-xs text-slate-400 font-mono" x-text="(metrics.disk?.used_gb ?? 0) + ' GB Used'"></span>
-                </div>
-                <!-- Progress Bar -->
-                <div class="w-full bg-slate-800 rounded-full h-2 mt-4 overflow-hidden">
-                    <div class="h-2 rounded-full transition-all duration-500"
-                         :class="(metrics.disk?.percent > 85) ? 'bg-rose-500' : (metrics.disk?.percent > 75) ? 'bg-amber-500' : 'bg-cyan-500'"
-                         :style="'width: ' + (metrics.disk?.percent || 0) + '%'"></div>
-                </div>
-                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
-                    <span>Ruang Bebas:</span>
-                    <span class="text-cyan-400 font-semibold" x-text="(metrics.disk?.free_gb ?? 0) + ' GB'"></span>
-                </div>
-            </div>
-
-            <!-- Network Throughput Card -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
-                <div class="flex items-center justify-between mb-3">
-                    <span class="text-xs font-medium uppercase tracking-wider text-slate-400">Network I/O</span>
-                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">Ethernet</span>
-                </div>
-                <div class="grid grid-cols-2 gap-2 mt-2">
+                <!-- ROW 1: 4 HOST TELEMETRY CARDS (3 + 3 + 3 + 3 = 12 COLS) -->
+                <!-- CPU Card -->
+                <div class="bento-card md:col-span-3 lg:col-span-3 bento-surface border border-slate-800/90 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5">
                     <div>
-                        <div class="text-[11px] text-slate-400 uppercase font-mono">Transmit &uarr;</div>
-                        <div class="text-xl font-bold font-mono text-white mt-0.5" x-text="(metrics.network?.tx_kbps || 0) + ' KB/s'"></div>
-                        <div class="text-[10px] text-slate-500 font-mono mt-0.5" x-text="'Total: ' + (metrics.network?.total_sent_mb || 0) + ' MB'"></div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">CPU Load (2 OCPU)</span>
+                            <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800 tabular-nums" x-text="(metrics.cpu?.cores || 2) + ' Cores'"></span>
+                        </div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl lg:text-4xl font-bold font-mono text-white tabular-nums" x-text="(metrics.cpu?.percent ?? 0) + '%'"></span>
+                            <span class="text-xs text-slate-400 font-mono tabular-nums" x-show="metrics.cpu?.freq_mhz" x-text="(metrics.cpu?.freq_mhz || 0) + ' MHz'"></span>
+                        </div>
+                        <div class="w-full bg-slate-900 rounded-full h-2 mt-4 overflow-hidden border border-slate-800/60">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="(metrics.cpu?.percent > 80) ? 'bg-rose-500' : (metrics.cpu?.percent > 60) ? 'bg-amber-500' : 'bg-cyan-400'"
+                                 :style="'width: ' + (metrics.cpu?.percent || 0) + '%'"></div>
+                        </div>
                     </div>
+                    <div class="flex gap-1.5 mt-4 pt-3 border-t border-slate-800/80">
+                        <template x-for="(core, idx) in (metrics.cpu?.per_core || [])" :key="idx">
+                            <div class="flex-1 bg-slate-900/90 border border-slate-800/80 rounded-lg p-1.5 text-center">
+                                <span class="text-[10px] text-slate-400 font-mono block" x-text="'CORE ' + idx"></span>
+                                <span class="text-xs font-mono font-semibold tabular-nums" :class="core > 75 ? 'text-amber-300' : 'text-slate-200'" x-text="core + '%'"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- RAM Card -->
+                <div class="bento-card md:col-span-3 lg:col-span-3 bento-surface border border-slate-800/90 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5">
                     <div>
-                        <div class="text-[11px] text-slate-400 uppercase font-mono">Receive &darr;</div>
-                        <div class="text-xl font-bold font-mono text-white mt-0.5" x-text="(metrics.network?.rx_kbps || 0) + ' KB/s'"></div>
-                        <div class="text-[10px] text-slate-500 font-mono mt-0.5" x-text="'Total: ' + (metrics.network?.total_recv_mb || 0) + ' MB'"></div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Memory RAM</span>
+                            <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800 tabular-nums" x-text="(metrics.ram?.total_gb || 12) + ' GB'"></span>
+                        </div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl lg:text-4xl font-bold font-mono text-white tabular-nums" x-text="(metrics.ram?.percent ?? 0) + '%'"></span>
+                            <span class="text-xs text-slate-400 font-mono tabular-nums" x-text="(metrics.ram?.used_gb ?? 0) + ' GB Used'"></span>
+                        </div>
+                        <div class="w-full bg-slate-900 rounded-full h-2 mt-4 overflow-hidden border border-slate-800/60">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="(metrics.ram?.percent > 85) ? 'bg-rose-500' : (metrics.ram?.percent > 75) ? 'bg-amber-500' : 'bg-emerald-400'"
+                                 :style="'width: ' + (metrics.ram?.percent || 0) + '%'"></div>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center text-xs font-mono mt-4 pt-3 border-t border-slate-800/80 tabular-nums">
+                        <span class="text-slate-400">Sisa Tersedia:</span>
+                        <span class="text-emerald-300 font-semibold" x-text="(metrics.ram?.available_gb ?? 0) + ' GB'"></span>
                     </div>
                 </div>
-                <div class="flex justify-between items-center text-xs text-slate-400 font-mono mt-3 pt-3 border-t border-slate-800/80">
-                    <span>Active Containers:</span>
-                    <span class="text-slate-200 font-semibold" x-text="(containers.running_count || 0) + ' / ' + (containers.total_count || 0)"></span>
-                </div>
-            </div>
 
-        </div>
-
-        <!-- Real-Time Metrics Charts Section -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <!-- CPU History Chart -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-sm font-semibold tracking-wide text-white">CPU UTILIZATION HISTORY</h2>
-                    <span class="text-xs text-slate-400 font-mono">Real-time (Interval 4s)</span>
-                </div>
-                <div class="h-56 relative">
-                    <canvas id="cpuChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Memory History Chart -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-sm font-semibold tracking-wide text-white">RAM UTILIZATION HISTORY</h2>
-                    <span class="text-xs text-slate-400 font-mono">Real-time (Interval 4s)</span>
-                </div>
-                <div class="h-56 relative">
-                    <canvas id="ramChart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bottom Grid: Docker Containers & Backup SLA Status -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            <!-- Docker Fleet Manager (2 cols on desktop) -->
-            <div class="lg:col-span-2 bg-brand-800 border border-slate-800 rounded-2xl p-5">
-                <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-                    <div class="flex items-center gap-2">
-                        <h2 class="text-sm font-semibold tracking-wide text-white">DOCKER CONTAINER FLEET</h2>
-                        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-cyan-400 font-mono" x-text="(containers.running_count || 0) + ' Running'"></span>
+                <!-- Disk Boot Volume Card -->
+                <div class="bento-card md:col-span-3 lg:col-span-3 bento-surface border border-slate-800/90 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Boot Disk (/)</span>
+                            <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800 tabular-nums" x-text="(metrics.disk?.total_gb || 46) + ' GB'"></span>
+                        </div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl lg:text-4xl font-bold font-mono text-white tabular-nums" x-text="(metrics.disk?.percent ?? 0) + '%'"></span>
+                            <span class="text-xs text-slate-400 font-mono tabular-nums" x-text="(metrics.disk?.used_gb ?? 0) + ' GB Used'"></span>
+                        </div>
+                        <div class="w-full bg-slate-900 rounded-full h-2 mt-4 overflow-hidden border border-slate-800/60">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="(metrics.disk?.percent > 85) ? 'bg-rose-500' : (metrics.disk?.percent > 75) ? 'bg-amber-500' : 'bg-cyan-400'"
+                                 :style="'width: ' + (metrics.disk?.percent || 0) + '%'"></div>
+                        </div>
                     </div>
-                    <span class="text-xs text-slate-400 font-mono">Socket: /var/run/docker.sock</span>
+                    <div class="flex justify-between items-center text-xs font-mono mt-4 pt-3 border-t border-slate-800/80 tabular-nums">
+                        <span class="text-slate-400">Ruang Bebas:</span>
+                        <span class="text-cyan-300 font-semibold" x-text="(metrics.disk?.free_gb ?? 0) + ' GB'"></span>
+                    </div>
                 </div>
 
-                <!-- Empty State -->
-                <div x-show="!containers.containers || containers.containers.length === 0" class="py-12 text-center text-slate-500">
-                    <p class="text-sm">Tidak ada kontainer Docker yang terdeteksi atau socket belum terhubung.</p>
+                <!-- Network Throughput Card -->
+                <div class="bento-card md:col-span-3 lg:col-span-3 bento-surface border border-slate-800/90 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-transform duration-300 hover:-translate-y-0.5">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Network I/O</span>
+                            <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">VNIC 0</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 mt-1">
+                            <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-2.5">
+                                <div class="text-[10px] text-slate-400 uppercase font-mono">TX &uarr;</div>
+                                <div class="text-lg font-bold font-mono text-white tabular-nums mt-0.5" x-text="(metrics.network?.tx_kbps || 0) + ' KB/s'"></div>
+                                <div class="text-[10px] text-slate-400 font-mono tabular-nums" x-text="(metrics.network?.total_sent_mb || 0) + ' MB'"></div>
+                            </div>
+                            <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-2.5">
+                                <div class="text-[10px] text-slate-400 uppercase font-mono">RX &darr;</div>
+                                <div class="text-lg font-bold font-mono text-white tabular-nums mt-0.5" x-text="(metrics.network?.rx_kbps || 0) + ' KB/s'"></div>
+                                <div class="text-[10px] text-slate-400 font-mono tabular-nums" x-text="(metrics.network?.total_recv_mb || 0) + ' MB'"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center text-xs font-mono mt-4 pt-3 border-t border-slate-800/80 tabular-nums">
+                        <span class="text-slate-400">Kontainer Aktif:</span>
+                        <span class="text-slate-100 font-semibold" x-text="(containers.running_count || 0) + ' / ' + (containers.total_count || 0)"></span>
+                    </div>
                 </div>
 
-                <!-- Container Table -->
-                <div x-show="containers.containers && containers.containers.length > 0" class="overflow-x-auto">
-                    <table class="w-full text-left text-xs">
-                        <thead>
-                            <tr class="text-slate-400 border-b border-slate-800/80 uppercase font-mono text-[11px]">
-                                <th class="pb-3 pl-2">Container</th>
-                                <th class="pb-3">Status</th>
-                                <th class="pb-3">Health</th>
-                                <th class="pb-3">CPU</th>
-                                <th class="pb-3">RAM</th>
-                                <th class="pb-3 pr-2 text-right">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-800/50">
-                            <template x-for="c in containers.containers" :key="c.id">
-                                <tr class="hover:bg-slate-800/40 transition">
-                                    <!-- Container Name & Image -->
-                                    <td class="py-3 pl-2">
-                                        <div class="font-semibold text-slate-200" x-text="c.name"></div>
-                                        <div class="text-[11px] text-slate-500 font-mono truncate max-w-[180px]" x-text="c.image"></div>
-                                    </td>
-                                    <!-- Status -->
-                                    <td class="py-3">
-                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium"
-                                              :class="c.is_running ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60' : 'bg-slate-800 text-slate-400'">
-                                            <span class="w-1.5 h-1.5 rounded-full" :class="c.is_running ? 'bg-emerald-400' : 'bg-slate-500'"></span>
-                                            <span x-text="c.status"></span>
-                                        </span>
-                                    </td>
-                                    <!-- Health -->
-                                    <td class="py-3">
-                                        <span x-show="c.health === 'healthy'" class="text-cyan-400 font-mono text-[11px]">&bull; Healthy</span>
-                                        <span x-show="c.health !== 'healthy'" class="text-slate-500 font-mono text-[11px]" x-text="c.health === 'unknown' ? '-' : c.health"></span>
-                                    </td>
-                                    <!-- CPU % -->
-                                    <td class="py-3 font-mono text-slate-300" x-text="c.is_running ? (c.cpu_percent + '%') : '-'"></td>
-                                    <!-- RAM Usage -->
-                                    <td class="py-3 font-mono text-slate-300">
-                                        <div x-show="c.is_running">
-                                            <span x-text="c.memory.used_mb + ' MB'"></span>
-                                            <span class="text-[10px] text-slate-500" x-text="'(' + c.memory.percent + '%)'"></span>
+                <!-- ROW 2: UPTIME KUMA PUBLIC STATUS (8 COLS) + BACKUP SLA INTEGRITY (4 COLS) = 12 COLS -->
+                <section class="bento-card md:col-span-6 lg:col-span-8 bento-surface border border-slate-800/90 rounded-2xl p-5 sm:p-6 flex flex-col justify-between"
+                         aria-label="Ringkasan Status Publik Uptime Kuma">
+                    <div>
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-800">
+                            <div>
+                                <div class="flex items-center gap-2.5 flex-wrap">
+                                    <h2 class="text-sm font-bold tracking-wide text-white uppercase">Status Layanan Publik (Uptime Kuma)</h2>
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold border"
+                                          :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/80' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-950/70 text-rose-300 border-rose-700/80' : kuma.overall_status === 'MAINTENANCE' ? 'bg-amber-950/70 text-amber-300 border-amber-700/80' : 'bg-slate-800 text-slate-300 border-slate-700'">
+                                        <span class="w-2 h-2 rounded-full"
+                                              :class="kuma.overall_status === 'HEALTHY' ? 'bg-emerald-400' : (kuma.overall_status === 'DEGRADED' || kuma.overall_status === 'DOWN') ? 'bg-rose-400' : kuma.overall_status === 'MAINTENANCE' ? 'bg-amber-400' : 'bg-slate-400'"></span>
+                                        <span x-text="kuma.overall_label || 'Tidak diketahui'"></span>
+                                    </span>
+                                    <span class="text-xs font-mono px-2.5 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800 tabular-nums"
+                                          x-text="(kuma.up_monitors ?? 0) + ' / ' + (kuma.total_monitors ?? 0) + ' Monitor Sehat'"></span>
+                                </div>
+                                <p class="text-xs text-slate-400 mt-1.5">
+                                    Endpoint publik <code class="text-cyan-300 font-mono">/api/status-page/default</code> &bull;
+                                    Pembaruan: <span class="font-mono text-slate-300 tabular-nums" x-text="kuma.last_updated || '-'"></span>
+                                </p>
+                            </div>
+
+                            <div class="flex flex-wrap items-center gap-2">
+                                <a :href="kuma.public_url || 'https://status.digitalneeds.my.id'"
+                                   target="_blank" rel="noopener noreferrer"
+                                   class="min-h-[44px] px-3.5 py-2 rounded-xl bg-brand-700 hover:bg-slate-700 text-xs font-semibold text-white border border-slate-700 transition inline-flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                                    <span>Halaman Status Publik</span>
+                                    <span class="font-mono text-cyan-300">&nearr;</span>
+                                </a>
+                                <a :href="kuma.admin_url || 'https://status.digitalneeds.my.id/dashboard'"
+                                   target="_blank" rel="noopener noreferrer"
+                                   class="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-slate-300 border border-slate-800 transition inline-flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                                    <span>Kuma Admin</span>
+                                    <span class="font-mono text-slate-400">&nearr;</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- Safe Fallback Warning when Kuma is unreachable or invalid -->
+                        <div x-show="!kuma.available" class="mt-4 p-4 rounded-xl bg-slate-900/90 border border-slate-700/80 flex items-center justify-between gap-3 text-xs text-slate-300">
+                            <div>
+                                <span class="font-bold text-amber-300">Status Tidak Diketahui:</span>
+                                <span x-text="kuma.error || 'Tidak dapat memuat ringkasan monitor dari Uptime Kuma.'"></span>
+                            </div>
+                            <span class="font-mono text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0">Fallback Aman</span>
+                        </div>
+
+                        <!-- Degraded Alert -->
+                        <div x-show="kuma.available && kuma.degraded_monitors && kuma.degraded_monitors.length > 0"
+                             class="mt-4 p-4 rounded-xl bg-rose-950/35 border border-rose-800/80 text-xs text-rose-200">
+                            <div class="font-bold mb-1.5">Perhatian: Terdapat layanan yang memerlukan pemeriksaan</div>
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="dm in (kuma.degraded_monitors || [])" :key="dm.id">
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-950/80 border border-rose-800 text-rose-200 font-mono text-[11px]">
+                                        <span x-text="dm.name"></span>
+                                        <span>&bull;</span>
+                                        <span x-text="dm.label"></span>
+                                    </span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- 4 Public Monitors Grid -->
+                        <div x-show="kuma.available && kuma.monitors && kuma.monitors.length > 0"
+                             class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <template x-for="m in (kuma.monitors || [])" :key="m.id">
+                                <div class="p-3.5 rounded-xl bg-slate-900/75 border border-slate-800/90 hover:border-slate-700 transition flex flex-col justify-between gap-2.5">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <div class="text-xs font-bold text-slate-100 truncate" x-text="m.name"></div>
+                                            <div class="text-[11px] text-slate-400 truncate" x-text="m.group"></div>
                                         </div>
-                                        <span x-show="!c.is_running">-</span>
-                                    </td>
-                                    <!-- Actions: Logs Modal Button (44px target) -->
-                                    <td class="py-3 pr-2 text-right">
-                                        <button @click="openLogsModal(c.name)"
-                                                class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-3 py-2 rounded-lg bg-brand-700 hover:bg-cyan-900/60 hover:text-cyan-300 text-slate-200 border border-slate-700/70 text-xs font-mono transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                                                aria-label="Lihat log kontainer">
-                                            Logs
-                                        </button>
-                                    </td>
-                                </tr>
+                                        <span class="shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold border"
+                                              :class="m.status === 'UP' ? 'bg-emerald-950/70 text-emerald-300 border-emerald-800/80' : m.status === 'DOWN' ? 'bg-rose-950/70 text-rose-300 border-rose-800/80' : 'bg-slate-800 text-slate-300 border-slate-700'">
+                                            <span class="w-1.5 h-1.5 rounded-full"
+                                                  :class="m.status === 'UP' ? 'bg-emerald-400' : m.status === 'DOWN' ? 'bg-rose-400' : 'bg-slate-400'"></span>
+                                            <span x-text="m.label"></span>
+                                        </span>
+                                    </div>
+                                    <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] font-mono text-slate-400 tabular-nums">
+                                        <span>Uptime 24j: <strong class="text-slate-200" x-text="m.uptime_24h_pct !== null && m.uptime_24h_pct !== undefined ? (m.uptime_24h_pct + '%') : '-'"></strong></span>
+                                        <span class="text-cyan-300" x-text="m.ping_ms !== null && m.ping_ms !== undefined ? (m.ping_ms + ' ms') : '-'"></span>
+                                    </div>
+                                </div>
                             </template>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Backup & Healthcheck Card (1 col on desktop) -->
-            <div class="bg-brand-800 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
-                <div>
-                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-                        <h2 class="text-sm font-semibold tracking-wide text-white">BACKUP & SLA INTEGRITY</h2>
-                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono font-medium border"
-                              :class="backup.sla_healthy ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800' : 'bg-amber-950/60 text-amber-300 border-amber-800'"
-                              x-text="backup.status || 'CHECKING'"></span>
-                    </div>
-
-                    <!-- Backup Status Details -->
-                    <div class="space-y-3 text-xs">
-                        <div class="bg-slate-900/60 rounded-xl p-3 border border-slate-800/80">
-                            <div class="text-slate-400 mb-1">Status Kepatuhan SLA (Maks 26 Jam):</div>
-                            <div class="font-medium" :class="backup.sla_healthy ? 'text-emerald-300' : 'text-amber-300'" x-text="backup.message || '-'"></div>
-                        </div>
-
-                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
-                            <span class="text-slate-400">Berkas Cadangan Terbaru:</span>
-                            <span class="font-mono text-slate-200 font-semibold truncate max-w-[160px]" x-text="backup.latest_file || '-'"></span>
-                        </div>
-
-                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
-                            <span class="text-slate-400">Waktu Pembuatan:</span>
-                            <span class="font-mono text-slate-200" x-text="backup.latest_time || '-'"></span>
-                        </div>
-
-                        <div class="flex justify-between items-center py-2 border-b border-slate-800/60">
-                            <span class="text-slate-400">Ukuran Berkas Dump:</span>
-                            <span class="font-mono text-cyan-400 font-semibold" x-text="(backup.size_mb || 0) + ' MB'"></span>
-                        </div>
-
-                        <div class="flex justify-between items-center py-2">
-                            <span class="text-slate-400">Total Arsip Tersimpan:</span>
-                            <span class="font-mono text-slate-200" x-text="(backup.total_files || 0) + ' files (' + (backup.total_size_mb || 0) + ' MB)'"></span>
                         </div>
                     </div>
+                </section>
+
+                <!-- Backup & SLA Integrity Card (4 COLS) -->
+                <section class="bento-card md:col-span-6 lg:col-span-4 bento-surface border border-slate-800/90 rounded-2xl p-5 sm:p-6 flex flex-col justify-between"
+                         aria-label="Status Kepatuhan Backup dan SLA">
+                    <div>
+                        <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+                            <h2 class="text-sm font-bold tracking-wide text-white uppercase">Backup &amp; SLA Integrity</h2>
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-semibold border"
+                                  :class="backup.sla_healthy ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700/80' : 'bg-amber-950/70 text-amber-300 border-amber-700/80'"
+                                  x-text="backup.status || 'CHECKING'"></span>
+                        </div>
+
+                        <div class="space-y-3 text-xs">
+                            <div class="bg-slate-900/80 rounded-xl p-3.5 border border-slate-800/90">
+                                <div class="text-slate-400 mb-1">Status Kepatuhan SLA (Maks 26 Jam):</div>
+                                <div class="font-semibold" :class="backup.sla_healthy ? 'text-emerald-300' : 'text-amber-300'" x-text="backup.message || '-'"></div>
+                            </div>
+
+                            <div class="flex justify-between items-center py-2 border-b border-slate-800/70">
+                                <span class="text-slate-400">Berkas Cadangan Terbaru:</span>
+                                <span class="font-mono text-slate-200 font-semibold truncate max-w-[170px]" x-text="backup.latest_file || '-'"></span>
+                            </div>
+
+                            <div class="flex justify-between items-center py-2 border-b border-slate-800/70 tabular-nums">
+                                <span class="text-slate-400">Waktu Pembuatan:</span>
+                                <span class="font-mono text-slate-200" x-text="backup.latest_time || '-'"></span>
+                            </div>
+
+                            <div class="flex justify-between items-center py-2 border-b border-slate-800/70 tabular-nums">
+                                <span class="text-slate-400">Ukuran Berkas Dump:</span>
+                                <span class="font-mono text-cyan-300 font-semibold" x-text="(backup.size_mb || 0) + ' MB'"></span>
+                            </div>
+
+                            <div class="flex justify-between items-center py-1.5 tabular-nums">
+                                <span class="text-slate-400">Total Arsip Tersimpan:</span>
+                                <span class="font-mono text-slate-200" x-text="(backup.total_files || 0) + ' files (' + (backup.total_size_mb || 0) + ' MB)'"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400">
+                        Jadwal otomatis pukul 02:00 WIB via <code class="text-cyan-300 font-mono">/opt/scripts/backup.sh</code>.
+                    </div>
+                </section>
+
+                <!-- ROW 3: REAL-TIME TELEMETRY CHARTS (6 + 6 = 12 COLS) -->
+                <div class="bento-card md:col-span-3 lg:col-span-6 bento-surface border border-slate-800/90 rounded-2xl p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-sm font-bold tracking-wide text-white uppercase">CPU Utilization History</h2>
+                        <span class="text-xs text-slate-400 font-mono">Live Stream (4s)</span>
+                    </div>
+                    <div class="h-56 relative">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
                 </div>
 
-                <!-- Runbook note -->
-                <div class="mt-6 pt-4 border-t border-slate-800 text-[11px] text-slate-400">
-                    <p>Jadwal cron otomatis berjalan setiap hari pukul 02:00 WIB via <code class="text-cyan-400">/opt/scripts/backup.sh</code>.</p>
+                <div class="bento-card md:col-span-3 lg:col-span-6 bento-surface border border-slate-800/90 rounded-2xl p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-sm font-bold tracking-wide text-white uppercase">RAM Utilization History</h2>
+                        <span class="text-xs text-slate-400 font-mono">Live Stream (4s)</span>
+                    </div>
+                    <div class="h-56 relative">
+                        <canvas id="ramChart"></canvas>
+                    </div>
                 </div>
+
+                <!-- ROW 4: CATEGORIZED DIRECTORY OF ALL 9 ACTIVE DOMAINS (12 COLS -> 3 PILLARS x 4 COLS) -->
+                <section x-show="showAllServices" x-transition
+                         class="bento-card md:col-span-6 lg:col-span-12 bento-surface border border-slate-800/90 rounded-2xl p-5 sm:p-6"
+                         aria-label="Direktori Semua Layanan">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-5 border-b border-slate-800">
+                        <div>
+                            <h2 class="text-sm font-bold tracking-wide text-white uppercase">Direktori Layanan Aktif (9 Domain Kanonik)</h2>
+                            <p class="text-xs text-slate-400 mt-1">Inventaris domain produksi berdasarkan peran arsitektur. Label di kanan menunjukkan metode autentikasi, bukan klaim status online.</p>
+                        </div>
+                        <span class="inline-flex items-center px-3 py-1 rounded-lg text-xs font-mono font-semibold bg-slate-900 text-cyan-300 border border-slate-800 tabular-nums">
+                            {{ service_catalog.total if service_catalog else 9 }} Domain Terdaftar
+                        </span>
+                    </div>
+
+                    {% if service_catalog %}
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                        {% for category in service_catalog.categories %}
+                        <div class="lg:col-span-4 bg-slate-900/65 border border-slate-800/90 rounded-2xl p-4 flex flex-col">
+                            <div class="mb-3.5 pb-2.5 border-b border-slate-800/80">
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-cyan-300">{{ category.name }}</h3>
+                                <p class="text-[11px] text-slate-400 mt-0.5">{{ category.description }}</p>
+                            </div>
+                            <div class="space-y-2.5 flex-1">
+                                {% for svc in category.services %}
+                                {% if svc.is_current %}
+                                <div aria-current="page"
+                                     class="min-h-[52px] p-3.5 rounded-xl bg-cyan-950/30 border border-cyan-700/70 flex items-start justify-between gap-2.5">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="text-xs font-bold text-white">{{ svc.name }}</span>
+                                            <span class="px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-cyan-900/70 text-cyan-200 border border-cyan-700/70">
+                                                Dashboard ini
+                                            </span>
+                                        </div>
+                                        <div class="text-[11px] font-mono text-cyan-300 mt-0.5 truncate">{{ svc.domain }}</div>
+                                        <p class="text-[11px] text-slate-300 mt-1 leading-snug">{{ svc.role }}</p>
+                                    </div>
+                                    <span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-300 border border-slate-700">
+                                        {{ svc.access_label }}
+                                    </span>
+                                </div>
+                                {% else %}
+                                <a href="{{ svc.url }}" target="_blank" rel="noopener noreferrer"
+                                   class="min-h-[52px] p-3.5 rounded-xl bg-brand-800/95 hover:bg-brand-700/90 border border-slate-800 hover:border-cyan-500/50 transition-all duration-300 flex items-start justify-between gap-2.5 group focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-xs font-bold text-slate-100 group-hover:text-cyan-300 transition">{{ svc.name }}</span>
+                                            <span class="text-xs text-slate-400 group-hover:text-cyan-300 group-hover:translate-x-0.5 transition-transform font-mono">&nearr;</span>
+                                        </div>
+                                        <div class="text-[11px] font-mono text-slate-400 mt-0.5 truncate">{{ svc.domain }}</div>
+                                        <p class="text-[11px] text-slate-400 mt-1 leading-snug">{{ svc.role }}</p>
+                                    </div>
+                                    <span class="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-900 text-slate-300 border border-slate-700/80">
+                                        {{ svc.access_label }}
+                                    </span>
+                                </a>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </section>
+
+                <!-- ROW 5: DOCKER CONTAINER FLEET MANAGER (12 COLS) -->
+                <section class="bento-card md:col-span-6 lg:col-span-12 bento-surface border border-slate-800/90 rounded-2xl p-5 sm:p-6"
+                         aria-label="Manajemen Armada Kontainer Docker">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
+                        <div class="flex items-center gap-2.5">
+                            <h2 class="text-sm font-bold tracking-wide text-white uppercase">Docker Container Fleet</h2>
+                            <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-slate-800 font-mono font-semibold tabular-nums"
+                                  x-text="(containers.running_count || 0) + ' Running'"></span>
+                        </div>
+                        <span class="text-xs text-slate-400 font-mono">Socket: /var/run/docker.sock</span>
+                    </div>
+
+                    <div x-show="!containers.containers || containers.containers.length === 0" class="py-12 text-center text-slate-400">
+                        <p class="text-sm">Tidak ada kontainer Docker yang terdeteksi atau socket belum terhubung.</p>
+                    </div>
+
+                    <div x-show="containers.containers && containers.containers.length > 0" class="overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-slate-800/90 uppercase font-mono text-[11px]">
+                                    <th class="pb-3 pl-2">Container</th>
+                                    <th class="pb-3">Status</th>
+                                    <th class="pb-3">Health</th>
+                                    <th class="pb-3">CPU</th>
+                                    <th class="pb-3">RAM</th>
+                                    <th class="pb-3 pr-2 text-right">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/60">
+                                <template x-for="c in containers.containers" :key="c.id">
+                                    <tr class="hover:bg-slate-800/45 transition">
+                                        <td class="py-3.5 pl-2">
+                                            <div class="font-bold text-slate-100" x-text="c.name"></div>
+                                            <div class="text-[11px] text-slate-400 font-mono truncate max-w-[220px]" x-text="c.image"></div>
+                                        </td>
+                                        <td class="py-3.5">
+                                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-medium"
+                                                  :class="c.is_running ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/70' : 'bg-slate-800 text-slate-400'">
+                                                <span class="w-1.5 h-1.5 rounded-full" :class="c.is_running ? 'bg-emerald-400' : 'bg-slate-500'"></span>
+                                                <span x-text="c.status"></span>
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5">
+                                            <span x-show="c.health === 'healthy'" class="text-cyan-300 font-mono text-[11px]">&bull; Healthy</span>
+                                            <span x-show="c.health !== 'healthy'" class="text-slate-400 font-mono text-[11px]" x-text="c.health === 'unknown' ? '-' : c.health"></span>
+                                        </td>
+                                        <td class="py-3.5 font-mono text-slate-200 tabular-nums" x-text="c.is_running ? (c.cpu_percent + '%') : '-'"></td>
+                                        <td class="py-3.5 font-mono text-slate-200 tabular-nums">
+                                            <div x-show="c.is_running">
+                                                <span x-text="c.memory.used_mb + ' MB'"></span>
+                                                <span class="text-[10px] text-slate-400" x-text="'(' + c.memory.percent + '%)'"></span>
+                                            </div>
+                                            <span x-show="!c.is_running">-</span>
+                                        </td>
+                                        <td class="py-3.5 pr-2 text-right">
+                                            <button @click="openLogsModal(c.name)"
+                                                    type="button"
+                                                    class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-3.5 py-2 rounded-xl bg-brand-700 hover:bg-cyan-950 hover:text-cyan-200 text-slate-100 border border-slate-700 hover:border-cyan-700 text-xs font-mono font-semibold transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                                    aria-label="Lihat log kontainer">
+                                                Logs
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
             </div>
-
         </div>
-
-    </div>
+    </main>
 
     <!-- ================================================================= -->
     <!-- LOGS VIEWER MODAL (Accessible, closable via ESC or button)         -->
     <!-- ================================================================= -->
-    <div x-cloak x-show="logsModalOpen" 
+    <div x-cloak x-show="logsModalOpen"
          class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
          @keydown.escape.window="logsModalOpen = false">
-        
+
         <div class="w-full max-w-4xl bg-brand-800 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
              @click.outside="logsModalOpen = false">
-            
-            <!-- Modal Header -->
+
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-brand-850">
                 <div class="flex items-center gap-2.5">
                     <div class="w-2.5 h-2.5 rounded-full bg-cyan-400"></div>
                     <h3 class="text-sm font-semibold text-white font-mono" x-text="'CONTAINER LOGS: ' + activeLogContainer"></h3>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button @click="fetchContainerLogs(activeLogContainer)" 
+                    <button @click="fetchContainerLogs(activeLogContainer)"
+                            type="button"
                             class="min-h-[44px] px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs font-mono text-slate-200 border border-slate-700 transition focus:outline-none focus:ring-2 focus:ring-cyan-500">
                         Reload
                     </button>
-                    <button @click="logsModalOpen = false" 
+                    <button @click="logsModalOpen = false"
+                            type="button"
                             class="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-500"
                             aria-label="Tutup jendela modal">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -671,21 +714,20 @@
                 </div>
             </div>
 
-            <!-- Modal Body (Terminal-like text viewer) -->
             <div class="p-4 bg-brand-900 flex-1 overflow-y-auto font-mono text-xs text-slate-300 leading-relaxed custom-scroll" id="logContentBox">
-                <div x-show="logsLoading" class="py-8 text-center text-slate-500">
+                <div x-show="logsLoading" class="py-8 text-center text-slate-400">
                     Memuat log kontainer terbaru...
                 </div>
-                <div x-show="!logsLoading && (!logsContent || logsContent.trim() === '')" class="py-8 text-center text-slate-500">
+                <div x-show="!logsLoading && (!logsContent || logsContent.trim() === '')" class="py-8 text-center text-slate-400">
                     Tidak ada baris log yang tersedia saat ini.
                 </div>
                 <pre x-show="!logsLoading && logsContent" x-text="logsContent" class="whitespace-pre-wrap select-text"></pre>
             </div>
 
-            <!-- Modal Footer -->
             <div class="px-5 py-3 border-t border-slate-800 bg-brand-800 flex justify-between items-center text-xs text-slate-400">
                 <span>Menampilkan hingga 60 baris log terakhir</span>
-                <button @click="logsModalOpen = false" 
+                <button @click="logsModalOpen = false"
+                        type="button"
                         class="min-h-[44px] px-5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-medium border border-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-500">
                     Tutup
                 </button>
@@ -695,7 +737,7 @@
     {% endif %}
 
     <!-- ================================================================= -->
-    <!-- JAVASCRIPT APP CONTROLLER (Alpine.js + Chart.js)                  -->
+    <!-- JAVASCRIPT APP CONTROLLER (Alpine.js + GSAP 3.12 + Chart.js)      -->
     <!-- ================================================================= -->
     <script>
         function dashboardApp() {
@@ -808,10 +850,26 @@
                     window.location.reload();
                 },
 
+                // GSAP Bento Entrance Choreography
+                animateBentoEntrance() {
+                    const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    if (!window.gsap || prefersReducedMotion) return;
+
+                    gsap.fromTo('.hero-surface',
+                        { opacity: 0, y: 14 },
+                        { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }
+                    );
+                    gsap.fromTo('.bento-card',
+                        { opacity: 0, y: 18 },
+                        { opacity: 1, y: 0, duration: 0.55, stagger: 0.045, ease: 'power3.out', clearProps: 'transform' }
+                    );
+                },
+
                 // Dashboard Initializer
                 initDashboard() {
                     if (this.authenticated) {
                         this.$nextTick(() => {
+                            this.animateBentoEntrance();
                             this.initCharts();
                             this.fetchAllData();
                         });
@@ -849,7 +907,7 @@
                                 grid: { color: 'rgba(51, 65, 85, 0.3)' },
                                 ticks: {
                                     color: '#94a3b8',
-                                    font: { family: 'monospace', size: 10 },
+                                    font: { family: 'JetBrains Mono, monospace', size: 10 },
                                     callback: v => v + '%'
                                 }
                             },
@@ -857,7 +915,7 @@
                                 grid: { display: false },
                                 ticks: {
                                     color: '#64748b',
-                                    font: { family: 'monospace', size: 9 },
+                                    font: { family: 'JetBrains Mono, monospace', size: 9 },
                                     maxTicksLimit: 6
                                 }
                             }
@@ -866,8 +924,8 @@
                             legend: { display: false },
                             tooltip: {
                                 backgroundColor: '#0f172a',
-                                titleFont: { family: 'monospace', size: 11 },
-                                bodyFont: { family: 'monospace', size: 12 },
+                                titleFont: { family: 'JetBrains Mono, monospace', size: 11 },
+                                bodyFont: { family: 'JetBrains Mono, monospace', size: 12 },
                                 padding: 8,
                                 borderColor: '#334155',
                                 borderWidth: 1
