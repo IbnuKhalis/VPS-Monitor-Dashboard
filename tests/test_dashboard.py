@@ -321,7 +321,12 @@ class TestOperationsSecurityAndExecution(unittest.TestCase):
             self.assertEqual(resp.status_code, 400)
             self.assertIn("tidak didukung", resp.json()["detail"])
 
-    def test_successful_restart_execution_and_health_verification(self):
+    @patch("app.services.operations_service._poll_container_health", new_callable=AsyncMock)
+    @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    def test_successful_restart_execution_and_health_verification(self, mock_post, mock_health):
+        mock_post.return_value = unittest.mock.MagicMock(status_code=200, text='{"success": true}')
+        mock_health.return_value = True
+
         session_id = self._login_and_get_session()
         csrf_token = create_csrf_token(session_id)
 
@@ -362,7 +367,12 @@ class TestOperationsSecurityAndExecution(unittest.TestCase):
         for secret_word in ["token", "secret", "password", "key"]:
             self.assertNotIn(secret_word, latest.get("error", "").lower())
 
-    def test_rate_limiting_enforcement(self):
+    @patch("app.services.operations_service._poll_container_health", new_callable=AsyncMock)
+    @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    def test_rate_limiting_enforcement(self, mock_post, mock_health):
+        mock_post.return_value = unittest.mock.MagicMock(status_code=200, text='{"success": true}')
+        mock_health.return_value = True
+
         session_id = self._login_and_get_session()
         csrf_token = create_csrf_token(session_id)
 
