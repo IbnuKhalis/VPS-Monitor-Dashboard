@@ -1,0 +1,22 @@
+# ==============================================================================
+# Multi-arch Lightweight Python 3.12 Slim Image for Restricted Ops Executor
+# ==============================================================================
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install --no-cache-dir docker==7.1.0
+
+COPY ops_executor.py .
+
+EXPOSE 9092
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:9092/healthz')" || exit 1
+
+CMD ["python", "ops_executor.py"]

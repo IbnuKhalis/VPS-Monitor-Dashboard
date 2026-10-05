@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token if csrf_token else '' }}">
     <title>VPS Mission Control // digitalneeds.my.id</title>
     <!-- Google Fonts: Outfit (Editorial Display/UI) & JetBrains Mono (Telemetry Tabular) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -753,13 +754,88 @@
                                             <span x-show="!c.is_running">-</span>
                                         </td>
                                         <td class="py-3.5 pr-2 text-right">
-                                            <button @click="openLogsModal(c.name)"
-                                                    type="button"
-                                                    class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-3.5 py-2 rounded-xl bg-brand-700 hover:bg-cyan-950 hover:text-cyan-200 text-slate-100 border border-slate-700 hover:border-cyan-700 text-xs font-mono font-semibold transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                                                    aria-label="Lihat log kontainer">
-                                                Logs
-                                            </button>
+                                            <div class="inline-flex items-center gap-1.5 justify-end">
+                                                <template x-if="c.name === 'cv-builder'">
+                                                    <button @click="openOperationModal(c.name, 'restart')"
+                                                            type="button"
+                                                            class="min-h-[44px] px-3 py-2 rounded-xl bg-amber-950/60 hover:bg-amber-900/80 text-amber-200 hover:text-amber-100 border border-amber-700/80 hover:border-amber-500 text-xs font-mono font-semibold transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 flex items-center gap-1.5"
+                                                            title="Operasi terproteksi: Restart layanan allowlisted">
+                                                        <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                                        </svg>
+                                                        <span>Restart</span>
+                                                    </button>
+                                                </template>
+                                                <button @click="openLogsModal(c.name)"
+                                                        type="button"
+                                                        class="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-3.5 py-2 rounded-xl bg-brand-700 hover:bg-cyan-950 hover:text-cyan-200 text-slate-100 border border-slate-700 hover:border-cyan-700 text-xs font-mono font-semibold transition active:scale-95 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                                                        aria-label="Lihat log kontainer">
+                                                    Logs
+                                                </button>
+                                            </div>
                                         </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- ========================================================= -->
+                <!-- 6. OPERATIONS AUDIT TRAIL (Zero-Privilege Event Stream)   -->
+                <!-- ========================================================= -->
+                <section class="bento-card bento-surface border border-slate-800/90 rounded-3xl p-5 sm:p-6 mb-7"
+                         x-show="auditTrail && auditTrail.length > 0">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
+                            <h2 class="text-xs font-mono font-bold uppercase tracking-wider text-slate-200">
+                                Audit Trail Operasi Produksi
+                            </h2>
+                            <span class="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-md"
+                                  x-text="auditTrail.length + ' event'"></span>
+                        </div>
+                        <button @click="fetchAuditTrail()"
+                                type="button"
+                                class="text-xs font-mono text-cyan-400 hover:text-cyan-300 transition focus:outline-none focus:underline flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                            <span>Refresh Audit</span>
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto custom-scroll">
+                        <table class="w-full text-left text-xs font-mono">
+                            <thead>
+                                <tr class="text-slate-400 border-b border-slate-800/80 text-[11px]">
+                                    <th class="py-2 pl-2">Waktu</th>
+                                    <th class="py-2 px-2">Target</th>
+                                    <th class="py-2 px-2">Aksi</th>
+                                    <th class="py-2 px-2">Status</th>
+                                    <th class="py-2 px-2">Durasi</th>
+                                    <th class="py-2 px-2">Correlation ID</th>
+                                    <th class="py-2 pr-2 text-right">Aktor</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/40">
+                                <template x-for="item in auditTrail" :key="item.correlation_id">
+                                    <tr class="hover:bg-slate-800/30 transition-colors">
+                                        <td class="py-2.5 pl-2 text-slate-300 tabular-nums whitespace-nowrap" x-text="item.timestamp"></td>
+                                        <td class="py-2.5 px-2 font-bold text-white whitespace-nowrap" x-text="item.target"></td>
+                                        <td class="py-2.5 px-2">
+                                            <span class="px-2 py-0.5 rounded text-[10px] uppercase font-semibold bg-amber-950/70 border border-amber-800/70 text-amber-300" x-text="item.action"></span>
+                                        </td>
+                                        <td class="py-2.5 px-2">
+                                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold"
+                                                  :class="item.success ? 'bg-emerald-950/70 border border-emerald-800/70 text-emerald-300' : 'bg-rose-950/70 border border-rose-800/70 text-rose-300'">
+                                                <span class="w-1.5 h-1.5 rounded-full" :class="item.success ? 'bg-emerald-400' : 'bg-rose-400'"></span>
+                                                <span x-text="item.success ? 'SUCCESS' : 'FAILED'"></span>
+                                            </span>
+                                        </td>
+                                        <td class="py-2.5 px-2 text-slate-400 tabular-nums" x-text="(item.duration_ms || 0) + 'ms'"></td>
+                                        <td class="py-2.5 px-2 text-cyan-400/90 text-[11px]" x-text="item.correlation_id"></td>
+                                        <td class="py-2.5 pr-2 text-right text-slate-400 text-[10px]" x-text="item.actor"></td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -823,6 +899,97 @@
             </div>
         </div>
     </div>
+
+    <!-- ================================================================= -->
+    <!-- OPERATION CONFIRMATION MODAL (Strictly allowlisted action)       -->
+    <!-- ================================================================= -->
+    <div x-cloak x-show="operationModalOpen"
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+         @keydown.escape.window="if (!isExecutingOp) operationModalOpen = false">
+
+        <div class="w-full max-w-lg bg-brand-800 border border-amber-500/50 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+             @click.outside="if (!isExecutingOp) operationModalOpen = false">
+
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-brand-850">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-3 h-3 rounded-full bg-amber-400 animate-pulse"></div>
+                    <h3 class="text-sm font-semibold text-white font-mono uppercase">Konfirmasi Operasi Produksi</h3>
+                </div>
+                <button @click="operationModalOpen = false"
+                        :disabled="isExecutingOp"
+                        type="button"
+                        class="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-40"
+                        aria-label="Tutup jendela konfirmasi">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs">
+                <!-- Target Box -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex justify-between items-center">
+                    <div>
+                        <div class="text-[10px] font-mono uppercase text-slate-400">Target Layanan</div>
+                        <div class="text-sm font-bold text-white font-mono mt-0.5" x-text="activeOpTarget"></div>
+                    </div>
+                    <span class="px-2.5 py-1 rounded-md bg-amber-950/70 border border-amber-700/80 text-amber-300 font-mono font-semibold uppercase" x-text="activeOpAction"></span>
+                </div>
+
+                <!-- Impact Warning -->
+                <div class="bg-amber-950/30 border border-amber-800/60 rounded-xl p-3.5 text-slate-300 leading-relaxed">
+                    <div class="font-bold text-amber-300 mb-1 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <span>Dampak Operasional:</span>
+                    </div>
+                    <p class="text-[11px] text-slate-300">
+                        Kontainer <strong class="text-white font-mono">cv-builder</strong> akan dimuat ulang. Permintaan HTTP aktif ke <span class="font-mono text-cyan-300">cv.digitalneeds.my.id</span> akan mengalami jeda sesaat (1-3 detik) hingga proses kembali ke status HEALTHY. Sesi penyuntingan CV di browser pengguna tidak hilang karena data tersimpan di memori peramban.
+                    </p>
+                </div>
+
+                <!-- Verification Notice -->
+                <div class="text-[11px] text-slate-400 bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+                    <span class="text-cyan-300 font-semibold">&bull; Verifikasi Healthcheck:</span>
+                    Backend executor akan memverifikasi status kesehatan kontainer secara aktif sebelum menyatakan operasi selesai.
+                </div>
+
+                <!-- Result / Error Alert -->
+                <div x-show="opResult" class="p-3.5 rounded-xl border font-mono text-[11px]"
+                     :class="opResult?.success ? 'bg-emerald-950/70 border-emerald-700 text-emerald-200' : 'bg-rose-950/70 border-rose-700 text-rose-200'">
+                    <div class="font-bold" x-text="opResult?.message"></div>
+                    <div class="text-[10px] opacity-80 mt-1" x-text="'Correlation ID: ' + (opResult?.correlation_id || '-') + ' | Durasi: ' + (opResult?.duration_ms || 0) + 'ms'"></div>
+                </div>
+
+                <div x-show="opError" class="p-3.5 rounded-xl bg-rose-950/80 border border-rose-700 text-rose-200 text-xs">
+                    <span class="font-bold">Gagal:</span> <span x-text="opError"></span>
+                </div>
+            </div>
+
+            <div class="px-5 py-3 border-t border-slate-800 bg-brand-850 flex justify-end items-center gap-2.5">
+                <button @click="operationModalOpen = false"
+                        :disabled="isExecutingOp"
+                        type="button"
+                        class="min-h-[44px] px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold border border-slate-700 transition focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-40">
+                    Batal
+                </button>
+                <button @click="executeOperation()"
+                        :disabled="isExecutingOp"
+                        type="button"
+                        class="min-h-[44px] px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 text-xs font-bold transition focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-50 inline-flex items-center gap-2">
+                    <span x-show="!isExecutingOp">Eksekusi Restart</span>
+                    <span x-show="isExecutingOp" class="inline-flex items-center gap-2">
+                        <svg class="animate-spin h-4 w-4 text-slate-950" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Mengeksekusi &amp; Verifikasi...</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
     {% endif %}
 
     <!-- ================================================================= -->
@@ -875,6 +1042,15 @@
                 logsContent: '',
                 logsLoading: false,
 
+                // Production Operations Modal & Audit
+                operationModalOpen: false,
+                activeOpTarget: 'cv-builder',
+                activeOpAction: 'restart',
+                isExecutingOp: false,
+                opResult: null,
+                opError: null,
+                auditTrail: [],
+
                 // Charts
                 cpuChart: null,
                 ramChart: null,
@@ -884,7 +1060,7 @@
 
                 // PIN Methods
                 handleKeydown(e) {
-                    if (!this.authenticated && !this.logsModalOpen) {
+                    if (!this.authenticated && !this.logsModalOpen && !this.operationModalOpen) {
                         if (e.key >= '0' && e.key <= '9') {
                             e.preventDefault();
                             this.appendPin(e.key);
@@ -1076,7 +1252,8 @@
                     this.isLoading = true;
                     await Promise.all([
                         this.fetchMetricsAndHealth(),
-                        this.fetchContainersAndBackup()
+                        this.fetchContainersAndBackup(),
+                        this.fetchAuditTrail()
                     ]);
                     this.isLoading = false;
                 },
@@ -1181,6 +1358,63 @@
                             const box = document.getElementById('logContentBox');
                             if (box) box.scrollTop = box.scrollHeight;
                         });
+                    }
+                },
+
+                // Controlled Operations Modal
+                openOperationModal(target, action) {
+                    this.activeOpTarget = target;
+                    this.activeOpAction = action;
+                    this.opResult = null;
+                    this.opError = null;
+                    this.operationModalOpen = true;
+                },
+
+                async executeOperation() {
+                    if (this.isExecutingOp) return;
+                    this.isExecutingOp = true;
+                    this.opResult = null;
+                    this.opError = null;
+
+                    try {
+                        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                        const res = await fetch('/api/operations/execute', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': token
+                            },
+                            body: JSON.stringify({
+                                target: this.activeOpTarget,
+                                action: this.activeOpAction
+                            })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                            this.opResult = data;
+                            await Promise.all([
+                                this.fetchContainersAndBackup(),
+                                this.fetchAuditTrail()
+                            ]);
+                        } else {
+                            this.opError = data.detail || data.message || 'Eksekusi operasi gagal.';
+                        }
+                    } catch (err) {
+                        this.opError = 'Kesalahan jaringan: ' + err.message;
+                    } finally {
+                        this.isExecutingOp = false;
+                    }
+                },
+
+                async fetchAuditTrail() {
+                    try {
+                        const res = await fetch('/api/operations/audit');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.auditTrail = data.audit_trail || [];
+                        }
+                    } catch (e) {
+                        console.error('Error fetching audit trail:', e);
                     }
                 }
             }

@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     kuma_cache_ttl_seconds: int = int(os.getenv("KUMA_CACHE_TTL_SECONDS", "45"))
     kuma_timeout_seconds: float = float(os.getenv("KUMA_TIMEOUT_SECONDS", "3.0"))
 
+    # Operations Executor settings (Phase 5)
+    ops_executor_url: str = os.getenv("OPS_EXECUTOR_URL", "http://ops-executor:9092")
+    ops_executor_token: str = os.getenv("OPS_EXECUTOR_TOKEN", "vps-ops-executor-internal-secret-token-prod")
+    ops_rate_limit_seconds: int = int(os.getenv("OPS_RATE_LIMIT_SECONDS", "30"))
+
     class Config:
         env_file = ".env"
         extra = "ignore"

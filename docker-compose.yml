@@ -1,6 +1,8 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: vps-monitor-dashboard
     restart: unless-stopped
     environment:
@@ -8,12 +10,31 @@ services:
       - SECRET_KEY=${SECRET_KEY:-vps-monitoring-secret-key-prod-random-89234}
       - BACKUP_DIR=/opt/backups
       - DOCKER_SOCKET=unix:///var/run/docker.sock
+      - OPS_EXECUTOR_URL=http://ops-executor:9092
+      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN:-vps-ops-executor-internal-secret-token-prod}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/backups:/opt/backups:ro
     networks:
       - proxy-network
+      - dashboard-internal
+
+  ops-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.executor
+    container_name: vps-ops-executor
+    restart: unless-stopped
+    environment:
+      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN:-vps-ops-executor-internal-secret-token-prod}
+      - ALLOWED_TARGETS=cv-builder
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - dashboard-internal
 
 networks:
   proxy-network:
     external: true
+  dashboard-internal:
+    driver: bridge

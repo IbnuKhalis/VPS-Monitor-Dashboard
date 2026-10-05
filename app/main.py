@@ -11,6 +11,8 @@ from app.auth import (
     verify_pin,
     is_authenticated,
     require_auth,
+    create_csrf_token,
+    require_csrf,
 )
 from app.services.metrics import get_system_metrics
 from app.services.docker_service import get_containers_summary, get_container_logs
@@ -19,6 +21,11 @@ from app.services.healthcheck_service import evaluate_overall_health
 from app.services.service_catalog import get_service_catalog
 from app.services.kuma_service import get_kuma_status_summary
 from app.services.dineva_service import get_dineva_status
+from app.services.operations_service import (
+    get_allowed_operations,
+    get_audit_trail,
+    execute_allowed_operation,
+)
 
 app = FastAPI(
     title=settings.app_name,
@@ -38,18 +45,27 @@ class PinRequest(BaseModel):
     pin: str
 
 
+class OperationRequest(BaseModel):
+    target: str
+    action: str
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     auth_status = is_authenticated(request)
+    session_token = request.cookies.get(settings.session_cookie_name, "")
+    csrf_token = create_csrf_token(session_token) if auth_status else None
     context = {
         "request": request,
         "is_authenticated": auth_status,
+        "csrf_token": csrf_token,
         "app_name": settings.app_name,
         "app_version": settings.app_version,
         "refresh_interval": settings.refresh_interval_seconds,
         "service_catalog": get_service_catalog() if auth_status else None,
         "kuma_public_url": settings.kuma_public_url if auth_status else None,
         "dineva": get_dineva_status() if auth_status else None,
+        "allowed_ops": get_allowed_operations() if auth_status else None,
     }
     return templates.TemplateResponse(request, "index.html", context)
 
@@ -123,6 +139,28 @@ async def api_kuma_summary(refresh: bool = Query(default=False)):
 @app.get("/api/dineva", dependencies=[Depends(require_auth)])
 async def api_dineva():
     return get_dineva_status()
+
+
+@app.get("/api/operations/allowed", dependencies=[Depends(require_auth)])
+async def api_operations_allowed():
+    """Retrieve allowed operational targets and operational impacts."""
+    return get_allowed_operations()
+
+
+@app.get("/api/operations/audit", dependencies=[Depends(require_auth)])
+async def api_operations_audit():
+    """Retrieve audit history of past operations without secret leakage."""
+    return {"audit_trail": get_audit_trail()}
+
+
+@app.post("/api/operations/execute", dependencies=[Depends(require_csrf)])
+async def api_operations_execute(payload: OperationRequest):
+    """Execute an allowlisted container operation with healthcheck verification."""
+    return await execute_allowed_operation(
+        target=payload.target,
+        action=payload.action,
+        actor="owner-session",
+    )
 
 
 @app.get("/api/ping")

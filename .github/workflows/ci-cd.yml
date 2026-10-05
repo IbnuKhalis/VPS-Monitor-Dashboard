@@ -61,9 +61,9 @@ jobs:
               git reset --hard origin/main
             fi
             
-            docker compose build --pull app
+            docker compose build --pull
             docker compose up -d
             
             echo "Checking container status..."
-            docker ps --filter "name=vps-monitor-dashboard" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            docker ps --filter "name=vps-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
             echo "Deployment completed successfully!"

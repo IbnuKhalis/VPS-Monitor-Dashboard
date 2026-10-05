@@ -13,6 +13,8 @@ from app.services.kuma_service import (
 )
 from app.services.docker_service import sanitize_log_output, get_container_logs
 from app.services.dineva_service import get_dineva_status, _extract_safe_last_activity
+from app.auth import create_csrf_token
+from app.services.operations_service import reset_operations_state_for_tests, get_allowed_operations
 
 
 SAMPLE_PAGE_DATA = {
@@ -253,5 +255,146 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         self.assertIn("Cron Scheduler", activity["summary"])
 
 
+class TestOperationsSecurityAndExecution(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(app)
+        reset_operations_state_for_tests()
+
+    def _login_and_get_session(self) -> str:
+        login_resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        self.assertEqual(login_resp.status_code, 200)
+        session_id = self.client.cookies.get(settings.session_cookie_name)
+        self.assertIsNotNone(session_id)
+        return session_id
+
+    def test_operations_anonymous_access_denied(self):
+        # All operation endpoints require authenticated session
+        resp_allowed = self.client.get("/api/operations/allowed")
+        self.assertEqual(resp_allowed.status_code, 401)
+
+        resp_audit = self.client.get("/api/operations/audit")
+        self.assertEqual(resp_audit.status_code, 401)
+
+        resp_exec = self.client.post("/api/operations/execute", json={"target": "cv-builder", "action": "restart"})
+        self.assertEqual(resp_exec.status_code, 401)
+
+    def test_csrf_token_required_and_validated(self):
+        self._login_and_get_session()
+
+        # Missing CSRF header -> 403 Forbidden
+        resp_missing = self.client.post(
+            "/api/operations/execute",
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp_missing.status_code, 403)
+        self.assertIn("CSRF", resp_missing.json()["detail"])
+
+        # Invalid CSRF header -> 403 Forbidden
+        resp_invalid = self.client.post(
+            "/api/operations/execute",
+            headers={"X-CSRF-Token": "invalid_fake_token_value_999"},
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp_invalid.status_code, 403)
+        self.assertIn("CSRF", resp_invalid.json()["detail"])
+
+    def test_non_allowlisted_target_and_action_rejected(self):
+        session_id = self._login_and_get_session()
+        csrf_token = create_csrf_token(session_id)
+
+        # Non-allowlisted target -> 403 Forbidden
+        for bad_target in ["caddy-proxy", "vaultwarden", "nine-router", "uptime-kuma", "unknown"]:
+            resp = self.client.post(
+                "/api/operations/execute",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"target": bad_target, "action": "restart"},
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("tidak diizinkan", resp.json()["detail"])
+
+        # Disallowed action on valid target -> 400 Bad Request
+        for bad_action in ["stop", "start", "destroy", "rm", "exec"]:
+            resp = self.client.post(
+                "/api/operations/execute",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"target": "cv-builder", "action": bad_action},
+            )
+            self.assertEqual(resp.status_code, 400)
+            self.assertIn("tidak didukung", resp.json()["detail"])
+
+    def test_successful_restart_execution_and_health_verification(self):
+        session_id = self._login_and_get_session()
+        csrf_token = create_csrf_token(session_id)
+
+        # GET allowed operations
+        resp_allowed = self.client.get("/api/operations/allowed")
+        self.assertEqual(resp_allowed.status_code, 200)
+        data_allowed = resp_allowed.json()
+        self.assertIn("cv-builder", data_allowed["allowed_operations"])
+        self.assertEqual(data_allowed["allowed_operations"]["cv-builder"], ["restart"])
+
+        # Execute restart
+        resp_exec = self.client.post(
+            "/api/operations/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp_exec.status_code, 200)
+        res_json = resp_exec.json()
+        self.assertTrue(res_json["success"])
+        self.assertTrue(res_json["health_verified"])
+        self.assertEqual(res_json["target"], "cv-builder")
+        self.assertEqual(res_json["action"], "restart")
+        self.assertTrue(res_json["correlation_id"].startswith("op-"))
+        self.assertGreaterEqual(res_json["duration_ms"], 0)
+
+        # Verify audit trail
+        resp_audit = self.client.get("/api/operations/audit")
+        self.assertEqual(resp_audit.status_code, 200)
+        audit_trail = resp_audit.json()["audit_trail"]
+        self.assertGreaterEqual(len(audit_trail), 1)
+        latest = audit_trail[0]
+        self.assertEqual(latest["correlation_id"], res_json["correlation_id"])
+        self.assertEqual(latest["target"], "cv-builder")
+        self.assertEqual(latest["action"], "restart")
+        self.assertEqual(latest["status"], "SUCCESS")
+        self.assertTrue(latest["health_verified"])
+        # Ensure no secrets leaked
+        for secret_word in ["token", "secret", "password", "key"]:
+            self.assertNotIn(secret_word, latest.get("error", "").lower())
+
+    def test_rate_limiting_enforcement(self):
+        session_id = self._login_and_get_session()
+        csrf_token = create_csrf_token(session_id)
+
+        # First execution -> Success
+        resp1 = self.client.post(
+            "/api/operations/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp1.status_code, 200)
+
+        # Immediate second execution -> 429 Too Many Requests
+        resp2 = self.client.post(
+            "/api/operations/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp2.status_code, 429)
+        self.assertIn("Batas waktu antar-operasi", resp2.json()["detail"])
+
+    def test_html_index_includes_csrf_meta_and_restart_button(self):
+        self._login_and_get_session()
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        html = resp.text
+        self.assertIn('name="csrf-token"', html)
+        self.assertIn('openOperationModal(c.name, \'restart\')', html)
+        self.assertIn('Konfirmasi Operasi Produksi', html)
+        self.assertIn('Audit Trail Operasi Produksi', html)
+
+
 if __name__ == "__main__":
     unittest.main()
+
