@@ -11,6 +11,8 @@ from app.services.kuma_service import (
     get_kuma_status_summary,
     _cache,
 )
+from app.services.docker_service import sanitize_log_output, get_container_logs
+from app.services.dineva_service import get_dineva_status, _extract_safe_last_activity
 
 
 SAMPLE_PAGE_DATA = {
@@ -162,9 +164,21 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
             "cv.digitalneeds.my.id",
         ]:
             self.assertNotIn(private_domain, html)
+        self.assertIn("Kembali ke DigitalNeeds Hub", html)
+        self.assertIn("https://digitalneeds.my.id", html)
 
     def test_anonymous_api_endpoints_require_auth(self):
-        for endpoint in ["/api/services", "/api/kuma-summary", "/api/metrics", "/api/containers"]:
+        private_endpoints = [
+            "/api/services",
+            "/api/kuma-summary",
+            "/api/metrics",
+            "/api/containers",
+            "/api/containers/digitalneeds04-runtime/logs",
+            "/api/backup",
+            "/api/health",
+            "/api/dineva",
+        ]
+        for endpoint in private_endpoints:
             resp = self.client.get(endpoint)
             self.assertEqual(resp.status_code, 401, f"Endpoint {endpoint} should return 401 when unauthenticated")
 
@@ -177,6 +191,8 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         html = resp.text
         self.assertIn("Direktori Layanan Aktif (9 Domain Kanonik)", html)
         self.assertIn("Status Layanan Publik (Uptime Kuma)", html)
+        self.assertIn("Status Agen Otonom Dineva", html)
+        self.assertIn("Hub Beranda", html)
         self.assertIn("Dashboard ini", html)
         self.assertIn('rel="noopener noreferrer"', html)
 
@@ -186,6 +202,55 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         svc_resp = self.client.get("/api/services")
         self.assertEqual(svc_resp.status_code, 200)
         self.assertEqual(svc_resp.json()["total"], 9)
+
+        dineva_resp = self.client.get("/api/dineva")
+        self.assertEqual(dineva_resp.status_code, 200)
+        dineva_data = dineva_resp.json()
+        self.assertEqual(dineva_data["mode"], "READ_ONLY")
+        self.assertFalse(dineva_data["mutations_allowed"])
+
+    def test_log_sanitization_and_container_name_validation(self):
+        raw_log_with_secrets = (
+            "2026-10-06 01:00:00 INFO Initializing service\n"
+            "Authorization: Bearer secret_bearer_token_xyz123\n"
+            "X-Ops-Token: ops_secret_token_abc\n"
+            "POSTGRES_PASSWORD=super_secret_db_pass\n"
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n"
+        )
+        sanitized = sanitize_log_output(raw_log_with_secrets)
+        self.assertNotIn("secret_bearer_token_xyz123", sanitized)
+        self.assertNotIn("ops_secret_token_abc", sanitized)
+        self.assertNotIn("super_secret_db_pass", sanitized)
+        self.assertNotIn("MIIEowIBAAKCAQEA", sanitized)
+        self.assertIn("Bearer [REDACTED]", sanitized)
+        self.assertIn("X-Ops-Token: [REDACTED]", sanitized)
+        self.assertIn("POSTGRES_PASSWORD=[REDACTED]", sanitized)
+        self.assertIn("[PRIVATE KEY REDACTED]", sanitized)
+
+        # Invalid container name validation
+        for bad_name in ["", "../../etc/shadow", "test;rm -rf", "name with spaces"]:
+            result = get_container_logs(bad_name)
+            self.assertFalse(result["success"])
+            self.assertIn("Invalid container name format", result["error"])
+
+    def test_dineva_read_only_adapter_boundary(self):
+        status = get_dineva_status()
+        self.assertIn("agent_id", status)
+        self.assertEqual(status["agent_id"], "digitalneeds04")
+        self.assertEqual(status["mode"], "READ_ONLY")
+        self.assertFalse(status["mutations_allowed"])
+        self.assertIn("status", status)
+        self.assertIn("last_activity", status)
+
+        # Safe activity parsing from sample logs
+        sample_log = (
+            "2026-10-05 17:01:03,521 WARNING cron.scheduler: Job 'fc4dff40a0ab': target={'platform': 'discord'}\n"
+        )
+        activity = _extract_safe_last_activity(sample_log)
+        self.assertEqual(activity["timestamp"], "2026-10-05 17:01:03")
+        self.assertEqual(activity["component"], "cron.scheduler")
+        self.assertNotIn("fc4dff40a0ab", activity["summary"])
+        self.assertIn("Cron Scheduler", activity["summary"])
 
 
 if __name__ == "__main__":

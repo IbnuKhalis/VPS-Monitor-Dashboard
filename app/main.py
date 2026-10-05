@@ -18,6 +18,7 @@ from app.services.backup_service import get_backup_status
 from app.services.healthcheck_service import evaluate_overall_health
 from app.services.service_catalog import get_service_catalog
 from app.services.kuma_service import get_kuma_status_summary
+from app.services.dineva_service import get_dineva_status
 
 app = FastAPI(
     title=settings.app_name,
@@ -48,6 +49,7 @@ async def dashboard_page(request: Request):
         "refresh_interval": settings.refresh_interval_seconds,
         "service_catalog": get_service_catalog() if auth_status else None,
         "kuma_public_url": settings.kuma_public_url if auth_status else None,
+        "dineva": get_dineva_status() if auth_status else None,
     }
     return templates.TemplateResponse(request, "index.html", context)
 
@@ -116,6 +118,11 @@ async def api_services():
 @app.get("/api/kuma-summary", dependencies=[Depends(require_auth)])
 async def api_kuma_summary(refresh: bool = Query(default=False)):
     return await get_kuma_status_summary(force_refresh=refresh)
+
+
+@app.get("/api/dineva", dependencies=[Depends(require_auth)])
+async def api_dineva():
+    return get_dineva_status()
 
 
 @app.get("/api/ping")

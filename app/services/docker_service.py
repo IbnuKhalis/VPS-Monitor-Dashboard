@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 import docker
 from app.config import settings
@@ -151,8 +152,36 @@ def get_containers_summary():
         }
 
 
+MAX_LOG_CHARS = 50000
+CONTAINER_NAME_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
+
+SECRET_PATTERNS = [
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.\~]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"((?:X-Ops-Token|OPS_PROXY_TOKEN)\s*[:=]\s*)[A-Za-z0-9_\-]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api_?key|private_?key))(\s*[:=]\s*)(['\"]?)([^\'\"\s\r\n]{4,})\3"), r"\1\2\3[REDACTED]\3"),
+    (re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----"), "[PRIVATE KEY REDACTED]"),
+]
+
+
+def sanitize_log_output(text: str) -> str:
+    """Sanitize sensitive credentials, tokens, and private keys from container logs."""
+    if not text:
+        return ""
+    sanitized = text
+    for pattern, replacement in SECRET_PATTERNS:
+        sanitized = pattern.sub(replacement, sanitized)
+    return sanitized
+
+
 def get_container_logs(container_name: str, tail: int = 60) -> dict:
-    """Retrieve recent log lines for a specific container."""
+    """Retrieve recent log lines for a specific container with sanitization and size cap."""
+    if not container_name or not CONTAINER_NAME_REGEX.match(container_name):
+        return {
+            "success": False,
+            "error": f"Invalid container name format: '{container_name}'",
+            "logs": "",
+        }
+
     client = get_docker_client()
     if not client:
         return {"success": False, "error": "Docker socket not accessible", "logs": ""}
@@ -161,11 +190,20 @@ def get_container_logs(container_name: str, tail: int = 60) -> dict:
         container = client.containers.get(container_name)
         logs_bytes = container.logs(tail=tail, timestamps=True)
         logs_text = logs_bytes.decode("utf-8", errors="replace")
+
+        # Enforce size limit
+        truncated_notice = ""
+        if len(logs_text) > MAX_LOG_CHARS:
+            logs_text = logs_text[-MAX_LOG_CHARS:]
+            truncated_notice = "[... Log dipotong demi keamanan & batas ukuran (maks 50KB) ...]\n"
+
+        sanitized_logs = truncated_notice + sanitize_log_output(logs_text)
+
         return {
             "success": True,
             "name": container.name,
             "status": container.status,
-            "logs": logs_text,
+            "logs": sanitized_logs,
         }
     except docker.errors.NotFound:
         return {"success": False, "error": f"Container '{container_name}' not found", "logs": ""}
