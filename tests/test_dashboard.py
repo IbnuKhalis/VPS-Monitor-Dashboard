@@ -7,14 +7,13 @@ from app.config import settings
 from app.services.service_catalog import get_service_catalog, CANONICAL_SERVICES
 from app.services.kuma_service import (
     parse_kuma_status_payload,
-    build_unknown_summary,
     get_kuma_status_summary,
     _cache,
 )
 from app.services.docker_service import sanitize_log_output, get_container_logs
 from app.services.dineva_service import get_dineva_status, _extract_safe_last_activity
 from app.auth import create_csrf_token
-from app.services.operations_service import reset_operations_state_for_tests, get_allowed_operations
+from app.services.operations_service import reset_operations_state_for_tests
 
 
 SAMPLE_PAGE_DATA = {

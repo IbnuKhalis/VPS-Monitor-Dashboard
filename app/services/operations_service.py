@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import httpx
 from fastapi import HTTPException, status
 
@@ -215,6 +215,6 @@ async def execute_allowed_operation(
 
 def reset_operations_state_for_tests():
     """Helper for deterministic testing to reset rate limit timer and audit log."""
-    global _last_operation_timestamp, _audit_trail
+    global _last_operation_timestamp
     _last_operation_timestamp = 0.0
     _audit_trail.clear()

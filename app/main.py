@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, Response, Depends, Form, Query, HTTPException, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, Response, Depends, Query, HTTPException, status
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
