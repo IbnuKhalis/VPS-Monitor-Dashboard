@@ -186,12 +186,17 @@ def _collect_single_container_info(c) -> dict:
 
 class RestrictedExecutorHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code: int, payload: dict) -> None:
-        body = json.dumps(payload, indent=2).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info("Client disconnected before HTTP response could be sent")
+        except Exception as e:
+            logger.error(f"Error sending JSON response: {e}")
 
     def _check_auth(self) -> bool:
         if not AUTH_TOKEN:
