@@ -4,6 +4,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import os
+import time
+from typing import Dict, Any
 
 from app.config import settings
 from app.auth import (
@@ -70,13 +72,70 @@ async def dashboard_page(request: Request):
     return templates.TemplateResponse(request, "index.html", context)
 
 
+# In-memory rate limiting per client IP
+_pin_attempts: Dict[str, Dict[str, Any]] = {}
+
+
+def get_client_ip(request: Request) -> str:
+    """Safely determine client IP considering trusted reverse proxy headers."""
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
+        if parts:
+            return parts[0]
+    if request.client and request.client.host:
+        return request.client.host
+    return "127.0.0.1"
+
+
+def reset_pin_rate_limit_for_tests():
+    """Reset rate limit state for unit tests."""
+    global _pin_attempts
+    _pin_attempts.clear()
+
+
 @app.post("/api/verify-pin")
-async def api_verify_pin(payload: PinRequest, response: Response):
+async def api_verify_pin(payload: PinRequest, request: Request, response: Response):
+    client_ip = get_client_ip(request)
+    now = time.time()
+    record = _pin_attempts.get(client_ip, {"failed_attempts": 0, "lockout_until": 0.0, "last_attempt": 0.0})
+
+    # Check if client IP is currently locked out
+    if now < record.get("lockout_until", 0.0):
+        remaining = int(record["lockout_until"] - now)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Terlalu banyak percobaan PIN gagal. Coba lagi dalam {remaining} detik.",
+            headers={"Retry-After": str(remaining)},
+        )
+
+    # Validate PIN
     if not verify_pin(payload.pin):
+        # Reset counter if last attempt was older than lockout window
+        if now - record.get("last_attempt", 0.0) > (settings.pin_rate_limit_lockout_seconds * 2):
+            record = {"failed_attempts": 0, "lockout_until": 0.0, "last_attempt": now}
+
+        record["failed_attempts"] += 1
+        record["last_attempt"] = now
+
+        if record["failed_attempts"] >= settings.pin_rate_limit_max_attempts:
+            record["lockout_until"] = now + settings.pin_rate_limit_lockout_seconds
+            _pin_attempts[client_ip] = record
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Batas percobaan PIN tercapai ({settings.pin_rate_limit_max_attempts} kali). Akses dikunci sementara selama {settings.pin_rate_limit_lockout_seconds} detik.",
+                headers={"Retry-After": str(settings.pin_rate_limit_lockout_seconds)},
+            )
+
+        _pin_attempts[client_ip] = record
+        remaining_attempts = settings.pin_rate_limit_max_attempts - record["failed_attempts"]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Kode PIN salah. Silakan coba lagi.",
+            detail=f"Kode PIN salah. Sisa percobaan: {remaining_attempts}.",
         )
+
+    # Successful PIN validation -> clear failed attempts
+    _pin_attempts.pop(client_ip, None)
 
     token = create_session_token()
     response.set_cookie(
@@ -85,7 +144,7 @@ async def api_verify_pin(payload: PinRequest, response: Response):
         max_age=settings.session_max_age_seconds,
         httponly=True,
         samesite="lax",
-        secure=False,  # Caddy handles SSL termination at Cloudflare edge
+        secure=settings.session_cookie_secure,
     )
     return {"success": True, "message": "Autentikasi PIN berhasil"}
 

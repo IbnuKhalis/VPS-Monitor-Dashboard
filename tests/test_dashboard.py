@@ -14,6 +14,7 @@ from app.services.docker_service import sanitize_log_output, get_container_logs
 from app.services.dineva_service import get_dineva_status, _extract_safe_last_activity
 from app.auth import create_csrf_token
 from app.services.operations_service import reset_operations_state_for_tests
+from app.main import reset_pin_rate_limit_for_tests
 
 
 SAMPLE_PAGE_DATA = {
@@ -149,7 +150,8 @@ class TestKumaContractAndFallback(unittest.IsolatedAsyncioTestCase):
 
 class TestDashboardPrivacyAndRoutes(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        reset_pin_rate_limit_for_tests()
+        self.client = TestClient(app, base_url="https://testserver")
 
     def test_anonymous_get_root_hides_nine_domains_and_dashboard_shell(self):
         resp = self.client.get("/")
@@ -256,8 +258,9 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
 
 class TestOperationsSecurityAndExecution(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        reset_pin_rate_limit_for_tests()
         reset_operations_state_for_tests()
+        self.client = TestClient(app, base_url="https://testserver")
 
     def _login_and_get_session(self) -> str:
         login_resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
@@ -402,6 +405,92 @@ class TestOperationsSecurityAndExecution(unittest.TestCase):
         self.assertIn('openOperationModal(c.name, \'restart\')', html)
         self.assertIn('Konfirmasi Operasi Produksi', html)
         self.assertIn('Audit Trail Operasi Produksi', html)
+
+    @patch("app.services.docker_service.get_docker_client")
+    @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+    def test_executor_failure_returns_502_and_records_failed_audit_without_bypass(self, mock_post, mock_docker):
+        # Codex P1.1: When executor fails, no direct Docker fallback is attempted
+        mock_post.side_effect = Exception("Connection refused to ops-executor:9092")
+        mock_docker_client = unittest.mock.MagicMock()
+        mock_docker.return_value = mock_docker_client
+
+        session_id = self._login_and_get_session()
+        csrf_token = create_csrf_token(session_id)
+
+        resp = self.client.post(
+            "/api/operations/execute",
+            headers={"X-CSRF-Token": csrf_token},
+            json={"target": "cv-builder", "action": "restart"},
+        )
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("Gagal mengeksekusi operasi", resp.json()["detail"])
+        # Verify Docker client restart was NEVER called (no privilege bypass)
+        mock_docker_client.containers.get.assert_not_called()
+
+        # Verify audit trail records FAILED
+        resp_audit = self.client.get("/api/operations/audit")
+        self.assertEqual(resp_audit.status_code, 200)
+        trail = resp_audit.json()["audit_trail"]
+        self.assertGreaterEqual(len(trail), 1)
+        self.assertEqual(trail[0]["status"], "FAILED")
+        self.assertFalse(trail[0]["health_verified"])
+
+    def test_audit_persistence_and_retention_limit(self):
+        # Codex P2.6: Audit log must persist to disk and enforce 50-entry cap on all paths
+        from app.services.operations_service import _record_audit_entry, get_audit_trail, MAX_AUDIT_ENTRIES
+        import os
+
+        # Add 55 entries (mix of SUCCESS and FAILED)
+        for i in range(55):
+            status = "SUCCESS" if i % 2 == 0 else "FAILED"
+            _record_audit_entry({
+                "correlation_id": f"op-test-{i}",
+                "timestamp": "2026-10-06T12:00:00Z",
+                "actor": "owner-session",
+                "target": "cv-builder",
+                "action": "restart",
+                "status": status,
+                "health_verified": (status == "SUCCESS"),
+                "duration_ms": 100 + i,
+            })
+
+        trail = get_audit_trail()
+        self.assertEqual(len(trail), MAX_AUDIT_ENTRIES)
+        self.assertEqual(trail[0]["correlation_id"], "op-test-54")
+        self.assertTrue(os.path.exists(settings.ops_audit_file))
+
+
+class TestPinRateLimitingAndSecurity(unittest.TestCase):
+    def setUp(self):
+        reset_pin_rate_limit_for_tests()
+        self.client = TestClient(app, base_url="https://testserver")
+
+    def test_pin_rate_limiting_lockout_after_max_attempts(self):
+        # Codex P1.2: 5 wrong attempts trigger 429 lockout
+        for attempt in range(1, settings.pin_rate_limit_max_attempts):
+            resp = self.client.post("/api/verify-pin", json={"pin": "wrong-pin"})
+            self.assertEqual(resp.status_code, 400)
+            self.assertIn("Sisa percobaan", resp.json()["detail"])
+
+        # 5th attempt reaches max attempts -> 429 Too Many Requests
+        resp_5th = self.client.post("/api/verify-pin", json={"pin": "wrong-pin"})
+        self.assertEqual(resp_5th.status_code, 429)
+        self.assertIn("Batas percobaan PIN tercapai", resp_5th.json()["detail"])
+        self.assertIn("Retry-After", resp_5th.headers)
+
+        # Subsequent attempt during lockout -> 429
+        resp_locked = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        self.assertEqual(resp_locked.status_code, 429)
+        self.assertIn("Terlalu banyak percobaan", resp_locked.json()["detail"])
+
+    def test_session_cookie_has_secure_attribute(self):
+        # Codex P2.7: Cookie must have secure attribute in HTTPS/production config
+        resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        self.assertEqual(resp.status_code, 200)
+        set_cookie = resp.headers.get("set-cookie", "").lower()
+        self.assertIn("secure", set_cookie)
+        self.assertIn("httponly", set_cookie)
+        self.assertIn("samesite=lax", set_cookie)
 
 
 if __name__ == "__main__":

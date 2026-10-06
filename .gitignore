@@ -54,3 +54,5 @@ credentials.json
 token.json
 .claude/settings.local.json
 scratch/
+data/*.json
+!data/.gitkeep

@@ -10,6 +10,9 @@ from fastapi import HTTPException, status
 from app.config import settings
 from app.services.docker_service import get_docker_client
 
+import json
+import os
+
 logger = logging.getLogger("operations_service")
 
 # Strict Allowlist: Only approved containers and actions
@@ -31,8 +34,58 @@ OPERATION_METADATA: Dict[str, Dict[str, Any]] = {
 # Concurrency Mutex and Rate Limiting
 _ops_lock = asyncio.Lock()
 _last_operation_timestamp: float = 0.0
-_audit_trail: List[Dict[str, Any]] = []
 MAX_AUDIT_ENTRIES = 50
+
+
+def _sanitize_audit_error(error_msg: str) -> str:
+    """Remove any potential tokens or secrets from audit error messages."""
+    if not error_msg:
+        return ""
+    cleaned = str(error_msg)
+    for secret in [settings.ops_executor_token, settings.secret_key, settings.dashboard_pin]:
+        if secret and len(secret) > 3:
+            cleaned = cleaned.replace(secret, "[REDACTED]")
+    return cleaned[:300]
+
+
+def _load_audit_trail_from_disk() -> List[Dict[str, Any]]:
+    """Load persistent audit entries from disk."""
+    audit_file = settings.ops_audit_file
+    if os.path.exists(audit_file):
+        try:
+            with open(audit_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data[:MAX_AUDIT_ENTRIES]
+        except Exception as e:
+            logger.warning(f"Failed to read audit trail file {audit_file}: {e}")
+    return []
+
+
+def _save_audit_trail_to_disk() -> None:
+    """Write in-memory audit trail to disk atomically."""
+    audit_file = settings.ops_audit_file
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(audit_file)), exist_ok=True)
+        tmp_file = f"{audit_file}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(_audit_trail[:MAX_AUDIT_ENTRIES], f, indent=2)
+        os.replace(tmp_file, audit_file)
+    except Exception as e:
+        logger.warning(f"Failed to write audit trail to {audit_file}: {e}")
+
+
+_audit_trail: List[Dict[str, Any]] = _load_audit_trail_from_disk()
+
+
+def _record_audit_entry(entry: Dict[str, Any]) -> None:
+    """Add an entry to audit trail, maintain retention limit, and persist."""
+    if "error" in entry:
+        entry["error"] = _sanitize_audit_error(entry["error"])
+    _audit_trail.insert(0, entry)
+    while len(_audit_trail) > MAX_AUDIT_ENTRIES:
+        _audit_trail.pop()
+    _save_audit_trail_to_disk()
 
 
 def get_allowed_operations() -> Dict[str, Any]:
@@ -45,7 +98,10 @@ def get_allowed_operations() -> Dict[str, Any]:
 
 
 def get_audit_trail() -> List[Dict[str, Any]]:
-    """Return in-memory audit log of past operations without secrets."""
+    """Return persistent audit log of past operations without secrets."""
+    global _audit_trail
+    if not _audit_trail and os.path.exists(settings.ops_audit_file):
+        _audit_trail = _load_audit_trail_from_disk()
     return _audit_trail[:MAX_AUDIT_ENTRIES]
 
 
@@ -53,9 +109,8 @@ async def _poll_container_health(container_name: str, max_wait_seconds: int = 15
     """Actively verify that the container returned to running and healthy state."""
     client = get_docker_client()
     if not client:
-        # Mock/test fallback: assume healthy after delay
-        await asyncio.sleep(0.5)
-        return True
+        logger.warning(f"Docker client unavailable when verifying health for '{container_name}'.")
+        return False
 
     start_wait = time.time()
     while time.time() - start_wait < max_wait_seconds:
@@ -140,22 +195,11 @@ async def execute_allowed_operation(
                 if resp.status_code == 200:
                     executor_success = True
                 else:
-                    executor_error = resp.text
-                    logger.error(f"Executor returned {resp.status_code}: {resp.text}")
+                    executor_error = f"Executor returned HTTP {resp.status_code}: {resp.text}"
+                    logger.error(executor_error)
         except Exception as e:
-            # Fallback for environments where ops-executor is not running or during unit testing
-            logger.warning(f"Could not reach ops-executor at {settings.ops_executor_url}: {e}")
-            client = get_docker_client()
-            if client:
-                try:
-                    c = client.containers.get(target)
-                    c.restart(timeout=10)
-                    executor_success = True
-                except Exception as dex:
-                    executor_error = str(dex)
-            else:
-                # Under mock / local test environment
-                executor_success = True
+            executor_error = f"Koneksi ke executor gagal: {e}"
+            logger.error(f"Could not reach ops-executor at {settings.ops_executor_url}: {e}")
 
         if not executor_success:
             duration_ms = int((time.time() - start_time) * 1000)
@@ -170,9 +214,9 @@ async def execute_allowed_operation(
                 "duration_ms": duration_ms,
                 "error": executor_error or "Executor failed",
             }
-            _audit_trail.insert(0, audit_entry)
+            _record_audit_entry(audit_entry)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Gagal mengeksekusi operasi: {executor_error or 'Koneksi ke executor gagal'}",
             )
 
@@ -191,9 +235,7 @@ async def execute_allowed_operation(
             "health_verified": health_verified,
             "duration_ms": duration_ms,
         }
-        _audit_trail.insert(0, audit_entry)
-        if len(_audit_trail) > MAX_AUDIT_ENTRIES:
-            _audit_trail.pop()
+        _record_audit_entry(audit_entry)
 
         msg = (
             f"Layanan '{target}' berhasil di-restart dan terverifikasi sehat ({duration_ms}ms)."
@@ -215,6 +257,11 @@ async def execute_allowed_operation(
 
 def reset_operations_state_for_tests():
     """Helper for deterministic testing to reset rate limit timer and audit log."""
-    global _last_operation_timestamp
+    global _last_operation_timestamp, _audit_trail
     _last_operation_timestamp = 0.0
     _audit_trail.clear()
+    if os.path.exists(settings.ops_audit_file):
+        try:
+            os.remove(settings.ops_audit_file)
+        except OSError:
+            pass
