@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import threading
+import time
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional
@@ -103,11 +105,34 @@ def calculate_memory_stats(stats: dict) -> dict:
         return {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
 
 
+_summary_cache = None
+_summary_cache_time = 0.0
+_summary_lock = threading.Lock()
+SUMMARY_CACHE_TTL = 3.0  # seconds
+
+
+def reset_docker_summary_cache_for_tests() -> None:
+    """Helper for testing to reset summary cache."""
+    global _summary_cache, _summary_cache_time
+    with _summary_lock:
+        _summary_cache = None
+        _summary_cache_time = 0.0
+
+
 def get_containers_summary() -> Dict[str, Any]:
-    """Retrieve list and status of all Docker containers via ops-executor or local fallback."""
+    """Retrieve list and status of all Docker containers via ops-executor or local fallback (Codex S5)."""
+    global _summary_cache, _summary_cache_time
+    now = time.time()
+    with _summary_lock:
+        if _summary_cache is not None and (now - _summary_cache_time < SUMMARY_CACHE_TTL):
+            return _summary_cache
+
     # 1. Primary least-privilege route: query isolated ops-executor daemon
     executor_data = _call_executor("/containers")
     if executor_data and executor_data.get("available") is True:
+        with _summary_lock:
+            _summary_cache = executor_data
+            _summary_cache_time = time.time()
         return executor_data
 
     # 2. Local fallback if socket exists (unit tests / local dev)
@@ -175,12 +200,16 @@ def get_containers_summary() -> Dict[str, Any]:
             )
 
         result.sort(key=lambda x: (not x["is_running"], x["name"]))
-        return {
+        payload = {
             "available": True,
             "containers": result,
             "running_count": running_count,
             "total_count": len(containers),
         }
+        with _summary_lock:
+            _summary_cache = payload
+            _summary_cache_time = time.time()
+        return payload
     except Exception as e:
         logger.error(f"Error fetching container summaries from local client: {e}")
         return {

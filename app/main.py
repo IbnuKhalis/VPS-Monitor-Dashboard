@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import FastAPI, Request, Response, Depends, Query, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -5,6 +6,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import ipaddress
 import os
+import socket
+import threading
 import time
 from typing import Dict, Any, List
 
@@ -65,6 +68,9 @@ async def dashboard_page(request: Request):
     auth_status = is_authenticated(request)
     session_token = request.cookies.get(settings.session_cookie_name, "")
     csrf_token = create_csrf_token(session_token) if auth_status else None
+    catalog = await asyncio.to_thread(get_service_catalog) if auth_status else None
+    dineva = await asyncio.to_thread(get_dineva_status) if auth_status else None
+    allowed_ops = await asyncio.to_thread(get_allowed_operations) if auth_status else None
     context = {
         "request": request,
         "is_authenticated": auth_status,
@@ -72,10 +78,10 @@ async def dashboard_page(request: Request):
         "app_name": settings.app_name,
         "app_version": settings.app_version,
         "refresh_interval": settings.refresh_interval_seconds,
-        "service_catalog": get_service_catalog() if auth_status else None,
+        "service_catalog": catalog,
         "kuma_public_url": settings.kuma_public_url if auth_status else None,
-        "dineva": get_dineva_status() if auth_status else None,
-        "allowed_ops": get_allowed_operations() if auth_status else None,
+        "dineva": dineva,
+        "allowed_ops": allowed_ops,
     }
     return templates.TemplateResponse(request, "index.html", context)
 
@@ -83,24 +89,62 @@ async def dashboard_page(request: Request):
 # In-memory rate limiting per client IP (bounded to avoid memory exhaustion)
 _pin_attempts: Dict[str, Dict[str, Any]] = {}
 
+_trusted_nets_cache = None
+_trusted_nets_cache_time = 0.0
+_trusted_nets_lock = threading.Lock()
+TRUSTED_NETS_CACHE_TTL = 30.0  # seconds
+
+
+def reset_trusted_proxies_cache_for_tests() -> None:
+    """Reset DNS cache of trusted proxies for testing."""
+    global _trusted_nets_cache, _trusted_nets_cache_time
+    with _trusted_nets_lock:
+        _trusted_nets_cache = None
+        _trusted_nets_cache_time = 0.0
+
 
 def _get_trusted_networks() -> List[Any]:
-    networks = []
-    for item in settings.trusted_proxies.split(","):
-        raw = item.strip()
-        if raw:
+    global _trusted_nets_cache, _trusted_nets_cache_time
+    now = time.time()
+    with _trusted_nets_lock:
+        if _trusted_nets_cache is not None and (now - _trusted_nets_cache_time < TRUSTED_NETS_CACHE_TTL):
+            return _trusted_nets_cache
+
+        networks = []
+        for item in settings.trusted_proxies.split(","):
+            raw = item.strip()
+            if not raw:
+                continue
+            # 1. Direct IP network / literal (e.g. 127.0.0.1, ::1)
             try:
                 if "/" in raw:
                     networks.append(ipaddress.ip_network(raw, strict=False))
+                    continue
                 else:
                     networks.append(ipaddress.ip_network(f"{raw}/32" if ":" not in raw else f"{raw}/128", strict=False))
+                    continue
             except ValueError:
                 pass
-    return networks
+
+            # 2. Hostname resolution (e.g. caddy-proxy -> 172.18.0.2)
+            try:
+                resolved = socket.getaddrinfo(raw, None)
+                for addr in resolved:
+                    ip_str = addr[4][0]
+                    try:
+                        networks.append(ipaddress.ip_network(f"{ip_str}/32" if ":" not in ip_str else f"{ip_str}/128", strict=False))
+                    except ValueError:
+                        pass
+            except Exception:
+                pass
+
+        _trusted_nets_cache = networks
+        _trusted_nets_cache_time = now
+        return networks
 
 
 def is_trusted_proxy_peer(peer_ip_str: str) -> bool:
-    """Check if the direct socket peer IP belongs to an authorized trusted proxy network (Codex R2)."""
+    """Check if the direct socket peer IP belongs to an authorized trusted proxy network (Codex R2 & S2)."""
     if not peer_ip_str or peer_ip_str in ("testclient", "localhost"):
         return True
     try:
@@ -112,7 +156,7 @@ def is_trusted_proxy_peer(peer_ip_str: str) -> bool:
 
 
 def get_client_ip(request: Request) -> str:
-    """Safely determine client IP with strict trusted-proxy boundaries (Codex R2)."""
+    """Safely determine client IP with strict trusted-proxy boundaries (Codex R2 & S2)."""
     peer_ip = request.client.host if request.client and request.client.host else "127.0.0.1"
 
     # If socket peer is NOT a trusted proxy, IGNORE all forwarded headers!
@@ -130,7 +174,17 @@ def get_client_ip(request: Request) -> str:
         except ValueError:
             pass
 
-    # 2. X-Forwarded-For header (leftmost IP)
+    # 2. X-Real-IP header (passed by Caddy reverse proxy)
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        real_clean = real_ip.strip()
+        try:
+            ipaddress.ip_address(real_clean)
+            return real_clean
+        except ValueError:
+            pass
+
+    # 3. X-Forwarded-For header (leftmost IP)
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
         parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
@@ -245,28 +299,28 @@ async def ping():
 
 @app.get("/api/metrics", dependencies=[Depends(require_auth)])
 async def api_metrics():
-    return get_system_metrics()
+    return await asyncio.to_thread(get_system_metrics)
 
 
 @app.get("/api/containers", dependencies=[Depends(require_auth)])
 async def api_containers():
-    return get_containers_summary()
+    return await asyncio.to_thread(get_containers_summary)
 
 
 @app.get("/api/containers/{container_name}/logs", dependencies=[Depends(require_auth)])
 async def api_container_logs(container_name: str, tail: int = Query(60, ge=1, le=500)):
-    return get_container_logs(container_name, tail=tail)
+    return await asyncio.to_thread(get_container_logs, container_name, tail=tail)
 
 
 @app.get("/api/backup", dependencies=[Depends(require_auth)])
 @app.get("/api/backups", dependencies=[Depends(require_auth)])
 async def api_backups():
-    return get_backup_status()
+    return await asyncio.to_thread(get_backup_status)
 
 
 @app.get("/api/services", dependencies=[Depends(require_auth)])
 async def api_services():
-    return get_service_catalog()
+    return await asyncio.to_thread(get_service_catalog)
 
 
 @app.get("/api/kuma-summary", dependencies=[Depends(require_auth)])
@@ -277,23 +331,24 @@ async def api_kuma_status(refresh: bool = Query(default=False)):
 
 @app.get("/api/dineva", dependencies=[Depends(require_auth)])
 async def api_dineva():
-    return get_dineva_status()
+    return await asyncio.to_thread(get_dineva_status)
 
 
 @app.get("/api/health", dependencies=[Depends(require_auth)])
 async def api_health():
-    return evaluate_overall_health()
+    return await asyncio.to_thread(evaluate_overall_health)
 
 
 @app.get("/api/operations/allowed", dependencies=[Depends(require_auth)])
 @app.get("/api/operations/catalog", dependencies=[Depends(require_auth)])
 async def api_operations_allowed():
-    return get_allowed_operations()
+    return await asyncio.to_thread(get_allowed_operations)
 
 
 @app.get("/api/operations/audit", dependencies=[Depends(require_auth)])
 async def api_operations_audit():
-    return {"audit_trail": get_audit_trail()}
+    audit_trail = await asyncio.to_thread(get_audit_trail)
+    return {"audit_trail": audit_trail}
 
 
 

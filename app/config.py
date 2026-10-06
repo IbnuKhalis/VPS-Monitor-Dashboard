@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     refresh_interval_seconds: int = 4
 
     # Trusted Reverse Proxies (Codex R2 & S2)
-    # Strictly scoped to loopback and local Docker bridge networks (Caddy container)
-    # Wide private subnets (10.0.0.0/8, 192.168.0.0/16) are strictly excluded to prevent spoofing from rogue peers.
-    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1,172.16.0.0/12")
+    # Strictly scoped to authentic reverse proxy (caddy-proxy) and loopback.
+    # Shared bridge subnets (172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16) are excluded to prevent rogue container spoofing.
+    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "caddy-proxy,127.0.0.1,::1")
 
     # Uptime Kuma status page integration settings
     kuma_base_url: str = os.getenv("KUMA_BASE_URL", "http://uptime-kuma:3001")

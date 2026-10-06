@@ -4,13 +4,18 @@ import os
 import re
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, urlparse
 import docker
 
-# Dedicated Restricted Ops Executor Daemon (Phase 5 / Re-audit R1)
-# Enforces strictly minimum necessary permissions for allowlisted container operations
-# and provides isolated read-only Docker telemetry so web dashboard NEVER mounts raw docker.sock.
-# NEVER exposed to public reverse proxy or outside network.
+# Dedicated Restricted Ops Executor Daemon (Phase 5 / Re-audit R1 & S5)
+# Threaded HTTP server ensures healthz probes are never blocked by heavy Docker telemetry calls.
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+    block_on_close = False
 
 PORT = int(os.environ.get("OPS_EXECUTOR_PORT", "9092"))
 HOST = os.environ.get("OPS_EXECUTOR_HOST", "0.0.0.0")
@@ -110,6 +115,75 @@ def calculate_memory_stats(stats: dict) -> dict:
         return {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
 
 
+_telemetry_cache = None
+_telemetry_cache_time = 0.0
+_telemetry_lock = threading.Lock()
+TELEMETRY_CACHE_TTL = 3.5  # seconds
+
+
+def reset_executor_cache_for_tests() -> None:
+    """Helper for testing to reset cached telemetry."""
+    global _telemetry_cache, _telemetry_cache_time
+    with _telemetry_lock:
+        _telemetry_cache = None
+        _telemetry_cache_time = 0.0
+
+
+def _collect_single_container_info(c) -> dict:
+    """Collect telemetry, health, image, and stats for a single container safely."""
+    status = c.status.lower()
+    is_running = status == "running"
+    health = "unknown"
+    state_dict = c.attrs.get("State", {})
+    if "Health" in state_dict:
+        health = state_dict["Health"].get("Status", "unknown")
+
+    mem_data = {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
+    cpu_pct = 0.0
+    if is_running:
+        try:
+            stats = c.stats(stream=False)
+            mem_data = calculate_memory_stats(stats)
+            cpu_pct = calculate_cpu_percent(stats)
+        except Exception:
+            pass
+
+    ports_raw = c.attrs.get("NetworkSettings", {}).get("Ports", {})
+    ports_summary = []
+    if ports_raw:
+        for port_proto, bindings in ports_raw.items():
+            if bindings:
+                for b in bindings:
+                    ports_summary.append(f"{b.get('HostPort')}:{port_proto}")
+            else:
+                ports_summary.append(port_proto)
+
+    image_str = c.attrs.get("Config", {}).get("Image", "")
+    try:
+        if c.image and c.image.tags:
+            image_str = c.image.tags[0]
+        elif c.image:
+            image_str = c.image.short_id
+    except Exception:
+        pass
+    if not image_str:
+        image_str = "unknown"
+
+    return {
+        "id": c.short_id,
+        "name": c.name,
+        "image": image_str,
+        "status": status,
+        "health": health,
+        "is_running": is_running,
+        "created": c.attrs.get("Created", "")[:19].replace("T", " "),
+        "restart_count": state_dict.get("RestartCount", 0),
+        "ports": ", ".join(ports_summary) if ports_summary else "-",
+        "cpu_percent": cpu_pct,
+        "memory": mem_data,
+    }
+
+
 class RestrictedExecutorHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code: int, payload: dict) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
@@ -159,72 +233,39 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
 
         # 2. Read-only list containers (/containers)
         if path == "/containers":
+            global _telemetry_cache, _telemetry_cache_time
+            now = time.time()
+            with _telemetry_lock:
+                if _telemetry_cache and (now - _telemetry_cache_time < TELEMETRY_CACHE_TTL):
+                    self._send_json(200, _telemetry_cache)
+                    return
+
             try:
                 containers = client.containers.list(all=True)
+                running_count = sum(1 for c in containers if c.status.lower() == "running")
+
                 result = []
-                running_count = 0
-                for c in containers:
-                    status = c.status.lower()
-                    is_running = status == "running"
-                    if is_running:
-                        running_count += 1
-                    health = "unknown"
-                    state_dict = c.attrs.get("State", {})
-                    if "Health" in state_dict:
-                        health = state_dict["Health"].get("Status", "unknown")
-
-                    mem_data = {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
-                    cpu_pct = 0.0
-                    if is_running:
+                max_w = min(12, max(1, len(containers)))
+                with ThreadPoolExecutor(max_workers=max_w) as pool:
+                    futures = [pool.submit(_collect_single_container_info, c) for c in containers]
+                    for f in as_completed(futures):
                         try:
-                            stats = c.stats(stream=False)
-                            mem_data = calculate_memory_stats(stats)
-                            cpu_pct = calculate_cpu_percent(stats)
-                        except Exception:
-                            pass
-
-                    ports_raw = c.attrs.get("NetworkSettings", {}).get("Ports", {})
-                    ports_summary = []
-                    if ports_raw:
-                        for port_proto, bindings in ports_raw.items():
-                            if bindings:
-                                for b in bindings:
-                                    ports_summary.append(f"{b.get('HostPort')}:{port_proto}")
-                            else:
-                                ports_summary.append(port_proto)
-
-                    image_str = c.attrs.get("Config", {}).get("Image", "")
-                    try:
-                        if c.image and c.image.tags:
-                            image_str = c.image.tags[0]
-                        elif c.image:
-                            image_str = c.image.short_id
-                    except Exception:
-                        pass
-                    if not image_str:
-                        image_str = "unknown"
-
-                    result.append({
-                        "id": c.short_id,
-                        "name": c.name,
-                        "image": image_str,
-                        "status": status,
-                        "health": health,
-                        "is_running": is_running,
-                        "created": c.attrs.get("Created", "")[:19].replace("T", " "),
-                        "restart_count": state_dict.get("RestartCount", 0),
-                        "ports": ", ".join(ports_summary) if ports_summary else "-",
-                        "cpu_percent": cpu_pct,
-                        "memory": mem_data,
-                    })
+                            result.append(f.result())
+                        except Exception as e:
+                            logger.error(f"Error gathering stats for container: {e}")
 
                 result.sort(key=lambda x: (not x["is_running"], x["name"]))
-                self._send_json(200, {
+                payload = {
                     "available": True,
                     "containers": result,
                     "running_count": running_count,
                     "total_count": len(containers),
-                })
+                }
+                with _telemetry_lock:
+                    _telemetry_cache = payload
+                    _telemetry_cache_time = time.time()
+
+                self._send_json(200, payload)
             except Exception as e:
                 logger.error(f"Error listing containers: {e}")
                 self._send_json(500, {"available": False, "error": str(e), "containers": [], "running_count": 0, "total_count": 0})
@@ -366,7 +407,7 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
 
 def run() -> None:
     validate_executor_configuration()
-    server = HTTPServer((HOST, PORT), RestrictedExecutorHandler)
+    server = ThreadedHTTPServer((HOST, PORT), RestrictedExecutorHandler)
     logger.info(f"Restricted Ops Executor starting on {HOST}:{PORT}")
     logger.info(f"Allowed targets: {list(ALLOWED_TARGETS)}")
     logger.info(f"Allowed actions: {list(ALLOWED_ACTIONS)}")

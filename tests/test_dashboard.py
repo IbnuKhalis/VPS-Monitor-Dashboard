@@ -463,6 +463,8 @@ class TestOperationsSecurityAndExecution(unittest.TestCase):
 class TestPinRateLimitingAndSecurity(unittest.TestCase):
     def setUp(self):
         reset_pin_rate_limit_for_tests()
+        from app.services.docker_service import reset_docker_summary_cache_for_tests
+        reset_docker_summary_cache_for_tests()
         self.client = TestClient(app, base_url="https://testserver")
 
     def test_pin_rate_limiting_lockout_after_max_attempts(self):
@@ -646,35 +648,141 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
         self.assertTrue(ops_executor.RestrictedExecutorHandler._check_auth(handler_correct))
 
     def test_proxy_allowlist_boundaries_and_spoof_defense(self):
-        # Codex S2: Allowlist strictly covers 127.0.0.1, ::1, 172.16.0.0/12; rejects 10.0.0.0/8 and 192.168.0.0/16
-        from app.main import is_trusted_proxy_peer, get_client_ip
-        from unittest.mock import MagicMock
+        # Codex S2: Scoped trusted proxy boundary strictly limits trust to authentic reverse proxy
+        # Rogue peers in Docker bridge (172.18.0.44, 172.31.99.7) and wide RFC1918 subnets are rejected
+        from app.main import is_trusted_proxy_peer, get_client_ip, reset_trusted_proxies_cache_for_tests
+        from unittest.mock import MagicMock, patch
 
-        # 1. Peer trust boundaries
+        reset_trusted_proxies_cache_for_tests()
+
+        # 1. Base boundaries: loopback allowed, external and arbitrary RFC1918 subnets rejected
         self.assertFalse(is_trusted_proxy_peer("10.123.45.67"))
         self.assertFalse(is_trusted_proxy_peer("10.0.0.1"))
         self.assertFalse(is_trusted_proxy_peer("192.168.1.100"))
         self.assertFalse(is_trusted_proxy_peer("8.8.8.8"))
         self.assertFalse(is_trusted_proxy_peer("203.0.113.50"))
-
         self.assertTrue(is_trusted_proxy_peer("127.0.0.1"))
         self.assertTrue(is_trusted_proxy_peer("::1"))
-        self.assertTrue(is_trusted_proxy_peer("172.18.0.2"))  # Docker bridge network
-        self.assertTrue(is_trusted_proxy_peer("172.17.0.1"))
 
-        # 2. Spoof defense: Rogue private peer (10.123.45.67) cannot inject CF-Connecting-IP
-        mock_rogue_req = MagicMock()
-        mock_rogue_req.client.host = "10.123.45.67"
-        mock_rogue_req.headers = {"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "1.1.1.1"}
-        client_ip = get_client_ip(mock_rogue_req)
-        self.assertEqual(client_ip, "10.123.45.67")
+        # 2. Non-proxy peers in Docker bridge (172.18.0.44, 172.31.99.7, 172.17.0.1) must NOT be trusted
+        self.assertFalse(is_trusted_proxy_peer("172.18.0.44"))
+        self.assertFalse(is_trusted_proxy_peer("172.31.99.7"))
+        self.assertFalse(is_trusted_proxy_peer("172.17.0.1"))
 
-        # 3. Legitimate proxy (172.18.0.2): CF-Connecting-IP is honored
-        mock_proxy_req = MagicMock()
-        mock_proxy_req.client.host = "172.18.0.2"
-        mock_proxy_req.headers = {"cf-connecting-ip": "203.0.113.44"}
-        client_ip_legit = get_client_ip(mock_proxy_req)
-        self.assertEqual(client_ip_legit, "203.0.113.44")
+        # 3. Authentic proxy resolution (caddy-proxy -> 172.18.0.2)
+        with patch("socket.getaddrinfo", return_value=[(None, None, None, None, ("172.18.0.2", 0))]):
+            reset_trusted_proxies_cache_for_tests()
+            self.assertTrue(is_trusted_proxy_peer("172.18.0.2"))  # Authentic Caddy proxy IP
+            self.assertFalse(is_trusted_proxy_peer("172.18.0.44")) # Rogue peer in same network
+            self.assertFalse(is_trusted_proxy_peer("172.31.99.7")) # Rogue peer in other network
+
+            # 4. Spoof defense: Rogue peer in same docker bridge (172.18.0.44) cannot spoof CF-Connecting-IP
+            mock_rogue_req = MagicMock()
+            mock_rogue_req.client.host = "172.18.0.44"
+            mock_rogue_req.headers = {"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "1.1.1.1"}
+            client_ip = get_client_ip(mock_rogue_req)
+            self.assertEqual(client_ip, "172.18.0.44")
+
+            # 5. Legitimate proxy (172.18.0.2): CF-Connecting-IP is honored
+            mock_proxy_req = MagicMock()
+            mock_proxy_req.client.host = "172.18.0.2"
+            mock_proxy_req.headers = {"cf-connecting-ip": "203.0.113.44"}
+            client_ip_legit = get_client_ip(mock_proxy_req)
+            self.assertEqual(client_ip_legit, "203.0.113.44")
+
+            # 6. Legitimate proxy (172.18.0.2): X-Real-IP is honored when CF header absent
+            mock_proxy_req2 = MagicMock()
+            mock_proxy_req2.client.host = "172.18.0.2"
+            mock_proxy_req2.headers = {"x-real-ip": "203.0.113.55"}
+            client_ip_legit2 = get_client_ip(mock_proxy_req2)
+            self.assertEqual(client_ip_legit2, "203.0.113.55")
+
+        reset_trusted_proxies_cache_for_tests()
+
+    def test_concurrency_slow_telemetry_does_not_block_ping_or_anon_rejections(self):
+        # Codex S5: Heavy/slow Docker telemetry does not freeze asyncio event loop
+        # Lightweight endpoints (ping, auth-status, anon rejections) respond quickly (< 0.2s)
+        import time
+        import threading
+        from app.services.docker_service import reset_docker_summary_cache_for_tests
+
+        reset_docker_summary_cache_for_tests()
+
+        def slow_executor_call(endpoint):
+            if endpoint == "/containers":
+                time.sleep(0.3)
+                return {"available": True, "containers": [], "running_count": 0, "total_count": 0}
+            return None
+
+        # Authenticate client
+        auth_client = TestClient(app, base_url="https://testserver")
+        login_resp = auth_client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        self.assertEqual(login_resp.status_code, 200)
+
+        with patch("app.services.docker_service._call_executor", side_effect=slow_executor_call):
+            def run_heavy():
+                auth_client.get("/api/containers")
+
+            t_heavy = threading.Thread(target=run_heavy)
+            t_heavy.start()
+
+            # Small delay to ensure heavy request is in-flight on threadpool
+            time.sleep(0.05)
+
+            # Concurrent ping request on separate client
+            t0 = time.time()
+            ping_resp = self.client.get("/api/ping")
+            ping_duration = time.time() - t0
+
+            # Concurrent unauthenticated rejection on /api/containers
+            t0 = time.time()
+            anon_resp = self.client.get("/api/containers")
+            anon_duration = time.time() - t0
+
+            t_heavy.join()
+
+            self.assertEqual(ping_resp.status_code, 200)
+            self.assertEqual(anon_resp.status_code, 401)
+            self.assertLess(ping_duration, 0.2, f"Ping took {ping_duration}s, should be < 0.2s")
+            self.assertLess(anon_duration, 0.2, f"Anon rejection took {anon_duration}s, should be < 0.2s")
+
+    def test_rogue_bridge_peer_spoofing_locked_out_on_fifth_attempt(self):
+        # Codex S2: Peer 172.18.0.44 changing CF-Connecting-IP gets 429 on 5th attempt
+        from app.main import reset_pin_rate_limit_for_tests, reset_trusted_proxies_cache_for_tests
+        from unittest.mock import patch, PropertyMock
+        from starlette.requests import Request
+
+        reset_pin_rate_limit_for_tests()
+        reset_trusted_proxies_cache_for_tests()
+
+        # Mock caddy-proxy resolution to 172.18.0.2
+        with patch("socket.getaddrinfo", return_value=[(None, None, None, None, ("172.18.0.2", 0))]):
+            with patch.object(Request, "client", new_callable=PropertyMock) as mock_client_prop:
+                from collections import namedtuple
+                Address = namedtuple("Address", ["host", "port"])
+                mock_client_prop.return_value = Address("172.18.0.44", 54321)
+
+                # First 4 attempts with varying spoofed CF-Connecting-IP headers
+                for i in range(1, 5):
+                    resp = self.client.post(
+                        "/api/verify-pin",
+                        json={"pin": "wrong-pin"},
+                        headers={"CF-Connecting-IP": f"203.0.113.{i}"},
+                    )
+                    self.assertEqual(resp.status_code, 400)
+                    self.assertIn(f"Sisa percobaan: {5 - i}", resp.json()["detail"])
+
+                # 5th attempt from same peer with another spoofed IP -> MUST be 429!
+                resp_5th = self.client.post(
+                    "/api/verify-pin",
+                    json={"pin": "wrong-pin"},
+                    headers={"CF-Connecting-IP": "203.0.113.99"},
+                )
+                self.assertEqual(resp_5th.status_code, 429)
+                self.assertIn("Batas percobaan PIN tercapai", resp_5th.json()["detail"])
+
+        reset_pin_rate_limit_for_tests()
+        reset_trusted_proxies_cache_for_tests()
 
     def test_audit_preflight_check_blocks_mutation_when_storage_unwritable(self):
         # Codex R4: Unwritable storage triggers 503 before contacting executor
@@ -757,7 +865,8 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
 
     def test_docker_telemetry_reads_from_ops_executor_without_raw_socket(self):
         # Codex R1: Web app queries ops-executor HTTP endpoints for telemetry
-        from app.services.docker_service import get_containers_summary, get_container_logs
+        from app.services.docker_service import get_containers_summary, get_container_logs, reset_docker_summary_cache_for_tests
+        reset_docker_summary_cache_for_tests()
         mock_summary = {
             "available": True,
             "containers": [{"id": "c123", "name": "cv-builder", "status": "running", "is_running": True}],
