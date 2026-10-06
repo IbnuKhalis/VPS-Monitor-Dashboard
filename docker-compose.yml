@@ -15,6 +15,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/backups:/opt/backups:ro
+      - ./data:/app/data
+
     networks:
       - proxy-network
       - dashboard-internal
