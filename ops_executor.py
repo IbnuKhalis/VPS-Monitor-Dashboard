@@ -193,10 +193,21 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
                             else:
                                 ports_summary.append(port_proto)
 
+                    image_str = c.attrs.get("Config", {}).get("Image", "")
+                    try:
+                        if c.image and c.image.tags:
+                            image_str = c.image.tags[0]
+                        elif c.image:
+                            image_str = c.image.short_id
+                    except Exception:
+                        pass
+                    if not image_str:
+                        image_str = "unknown"
+
                     result.append({
                         "id": c.short_id,
                         "name": c.name,
-                        "image": c.image.tags[0] if c.image.tags else c.image.short_id,
+                        "image": image_str,
                         "status": status,
                         "health": health,
                         "is_running": is_running,
