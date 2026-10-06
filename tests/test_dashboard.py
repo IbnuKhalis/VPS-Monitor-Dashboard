@@ -483,6 +483,116 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
         self.assertEqual(resp_locked.status_code, 429)
         self.assertIn("Terlalu banyak percobaan", resp_locked.json()["detail"])
 
+    def test_untrusted_peer_cannot_bypass_rate_limit_with_spoofed_headers(self):
+        # Codex R2: Untrusted peer changing X-Forwarded-For must be pinned to direct socket peer IP
+        from app.main import get_client_ip
+        from fastapi import Request
+
+        # Simulate untrusted external peer changing XFF on each attempt
+        for i in range(1, settings.pin_rate_limit_max_attempts):
+            # Client peer overridden or simulated as untrusted IP
+            with patch("app.main.is_trusted_proxy_peer", return_value=False):
+                resp = self.client.post(
+                    "/api/verify-pin",
+                    json={"pin": "wrong-pin"},
+                    headers={"X-Forwarded-For": f"198.51.100.{i}"},
+                )
+                self.assertEqual(resp.status_code, 400)
+
+        with patch("app.main.is_trusted_proxy_peer", return_value=False):
+            resp_5th = self.client.post(
+                "/api/verify-pin",
+                json={"pin": "wrong-pin"},
+                headers={"X-Forwarded-For": "198.51.100.99"},
+            )
+            # Must trigger 429 on 5th attempt despite changing X-Forwarded-For!
+            self.assertEqual(resp_5th.status_code, 429)
+
+    def test_trusted_proxy_distinguishes_multiple_valid_clients(self):
+        # Codex R2: Multiple distinct clients behind trusted proxy do not interfere
+        with patch("app.main.is_trusted_proxy_peer", return_value=True):
+            # Client A fails 4 times
+            for _ in range(4):
+                resp_a = self.client.post(
+                    "/api/verify-pin",
+                    json={"pin": "wrong-pin"},
+                    headers={"CF-Connecting-IP": "203.0.113.10"},
+                )
+                self.assertEqual(resp_a.status_code, 400)
+
+            # Client B makes 1 attempt
+            resp_b = self.client.post(
+                "/api/verify-pin",
+                json={"pin": "wrong-pin"},
+                headers={"CF-Connecting-IP": "203.0.113.20"},
+            )
+            self.assertEqual(resp_b.status_code, 400)
+            self.assertIn("Sisa percobaan: 4", resp_b.json()["detail"])
+
+    def test_production_mode_rejects_default_credentials(self):
+        # Codex R5: Production startup rejects default placeholder secrets
+        from app.config import validate_production_secrets
+        orig_env = settings.environment
+        orig_pin = settings.dashboard_pin
+        try:
+            settings.environment = "production"
+            settings.dashboard_pin = "123456"
+            with self.assertRaises(RuntimeError):
+                validate_production_secrets()
+        finally:
+            settings.environment = orig_env
+            settings.dashboard_pin = orig_pin
+
+    def test_audit_preflight_check_blocks_mutation_when_storage_unwritable(self):
+        # Codex R4: Unwritable storage triggers 503 before contacting executor
+        reset_operations_state_for_tests()
+        login_resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        token = login_resp.cookies.get(settings.session_cookie_name)
+        csrf_token = create_csrf_token(token)
+
+
+        with patch("app.services.operations_service._check_audit_writable", return_value=False):
+            resp = self.client.post(
+                "/api/operations/execute",
+                headers={"X-CSRF-Token": csrf_token},
+                json={"target": "cv-builder", "action": "restart"},
+            )
+            self.assertEqual(resp.status_code, 503)
+            self.assertIn("Penyimpanan audit trail tidak dapat ditulis", resp.json()["detail"])
+
+    def test_audit_durability_flag_recorded_when_disk_write_fails(self):
+        # Codex R4: Disk write failure records audit_persisted=False without crash
+        from app.services.operations_service import _record_audit_entry
+        test_entry = {
+            "correlation_id": "op-durability-probe",
+            "timestamp": "2026-10-06T12:00:00Z",
+            "actor": "owner-session",
+            "target": "cv-builder",
+            "action": "restart",
+            "status": "SUCCESS",
+            "health_verified": True,
+            "duration_ms": 150,
+        }
+        with patch("app.services.operations_service._save_audit_trail_to_disk", return_value=False):
+            persisted = _record_audit_entry(test_entry)
+            self.assertFalse(persisted)
+            self.assertFalse(test_entry["audit_persisted"])
+
+    def test_docker_telemetry_reads_from_ops_executor_without_raw_socket(self):
+        # Codex R1: Web app queries ops-executor HTTP endpoints for telemetry
+        from app.services.docker_service import get_containers_summary, get_container_logs
+        mock_summary = {
+            "available": True,
+            "containers": [{"id": "c123", "name": "cv-builder", "status": "running", "is_running": True}],
+            "running_count": 1,
+            "total_count": 1,
+        }
+        with patch("app.services.docker_service._call_executor", return_value=mock_summary):
+            res = get_containers_summary()
+            self.assertTrue(res["available"])
+            self.assertEqual(len(res["containers"]), 1)
+            self.assertEqual(res["containers"][0]["name"], "cv-builder")
+
     def test_session_cookie_has_secure_attribute(self):
         # Codex P2.7: Cookie must have secure attribute in HTTPS/production config
         resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
@@ -491,6 +601,7 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
         self.assertIn("secure", set_cookie)
         self.assertIn("httponly", set_cookie)
         self.assertIn("samesite=lax", set_cookie)
+
 
 
 if __name__ == "__main__":

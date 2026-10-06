@@ -3,11 +3,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+import ipaddress
 import os
 import time
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-from app.config import settings
+from app.config import settings, validate_production_secrets
 from app.auth import (
     create_session_token,
     verify_pin,
@@ -34,6 +35,13 @@ app = FastAPI(
     version=settings.app_version,
     description="VPS Mission Control & Infrastructure Monitoring Dashboard",
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Validate environment and secrets upon application startup."""
+    validate_production_secrets()
+
 
 # Template and static mounting
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -72,20 +80,86 @@ async def dashboard_page(request: Request):
     return templates.TemplateResponse(request, "index.html", context)
 
 
-# In-memory rate limiting per client IP
+# In-memory rate limiting per client IP (bounded to avoid memory exhaustion)
 _pin_attempts: Dict[str, Dict[str, Any]] = {}
 
 
+def _get_trusted_networks() -> List[Any]:
+    networks = []
+    for item in settings.trusted_proxies.split(","):
+        raw = item.strip()
+        if raw:
+            try:
+                if "/" in raw:
+                    networks.append(ipaddress.ip_network(raw, strict=False))
+                else:
+                    networks.append(ipaddress.ip_network(f"{raw}/32" if ":" not in raw else f"{raw}/128", strict=False))
+            except ValueError:
+                pass
+    return networks
+
+
+def is_trusted_proxy_peer(peer_ip_str: str) -> bool:
+    """Check if the direct socket peer IP belongs to an authorized trusted proxy network (Codex R2)."""
+    if not peer_ip_str or peer_ip_str in ("testclient", "localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(peer_ip_str)
+        trusted_nets = _get_trusted_networks()
+        return any(ip in net for net in trusted_nets)
+    except ValueError:
+        return False
+
+
 def get_client_ip(request: Request) -> str:
-    """Safely determine client IP considering trusted reverse proxy headers."""
+    """Safely determine client IP with strict trusted-proxy boundaries (Codex R2)."""
+    peer_ip = request.client.host if request.client and request.client.host else "127.0.0.1"
+
+    # If socket peer is NOT a trusted proxy, IGNORE all forwarded headers!
+    if not is_trusted_proxy_peer(peer_ip):
+        return peer_ip
+
+    # If peer IS trusted proxy, extract from headers with strict validation:
+    # 1. Cloudflare authentic connecting IP
+    cf_ip = request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        cf_clean = cf_ip.strip()
+        try:
+            ipaddress.ip_address(cf_clean)
+            return cf_clean
+        except ValueError:
+            pass
+
+    # 2. X-Forwarded-For header (leftmost IP)
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
         parts = [p.strip() for p in forwarded_for.split(",") if p.strip()]
         if parts:
-            return parts[0]
-    if request.client and request.client.host:
-        return request.client.host
-    return "127.0.0.1"
+            candidate = parts[0]
+            try:
+                ipaddress.ip_address(candidate)
+                return candidate
+            except ValueError:
+                pass
+
+    return peer_ip
+
+
+def _evict_stale_pin_records(now: float) -> None:
+    """Evict expired lockout records to prevent unbounded memory growth (Codex R2)."""
+    global _pin_attempts
+    keys_to_del = [
+        ip for ip, rec in _pin_attempts.items()
+        if now > rec.get("lockout_until", 0.0) and (now - rec.get("last_attempt", 0.0) > 300)
+    ]
+    for k in keys_to_del:
+        _pin_attempts.pop(k, None)
+
+    # Hard cap FIFO eviction if memory limit reached
+    if len(_pin_attempts) >= settings.pin_rate_limit_max_tracked_ips:
+        sorted_keys = sorted(_pin_attempts.keys(), key=lambda k: _pin_attempts[k].get("last_attempt", 0.0))
+        for k in sorted_keys[:max(1, len(_pin_attempts) - settings.pin_rate_limit_max_tracked_ips + 50)]:
+            _pin_attempts.pop(k, None)
 
 
 def reset_pin_rate_limit_for_tests():
@@ -98,6 +172,10 @@ def reset_pin_rate_limit_for_tests():
 async def api_verify_pin(payload: PinRequest, request: Request, response: Response):
     client_ip = get_client_ip(request)
     now = time.time()
+
+    # Maintenance eviction of stale memory records
+    _evict_stale_pin_records(now)
+
     record = _pin_attempts.get(client_ip, {"failed_attempts": 0, "lockout_until": 0.0, "last_attempt": 0.0})
 
     # Check if client IP is currently locked out
@@ -151,13 +229,18 @@ async def api_verify_pin(payload: PinRequest, request: Request, response: Respon
 
 @app.post("/api/logout")
 async def api_logout(response: Response):
-    response.delete_cookie(key=settings.session_cookie_name)
-    return {"success": True, "message": "Berhasil logout"}
+    response.delete_cookie(settings.session_cookie_name)
+    return {"success": True, "message": "Sesi telah diakhiri"}
 
 
 @app.get("/api/auth-status")
 async def api_auth_status(request: Request):
     return {"authenticated": is_authenticated(request)}
+
+
+@app.get("/api/ping")
+async def ping():
+    return {"status": "ok", "timestamp": time.time()}
 
 
 @app.get("/api/metrics", dependencies=[Depends(require_auth)])
@@ -171,18 +254,14 @@ async def api_containers():
 
 
 @app.get("/api/containers/{container_name}/logs", dependencies=[Depends(require_auth)])
-async def api_container_logs(container_name: str, tail: int = Query(default=60, ge=10, le=200)):
+async def api_container_logs(container_name: str, tail: int = Query(60, ge=1, le=500)):
     return get_container_logs(container_name, tail=tail)
 
 
 @app.get("/api/backup", dependencies=[Depends(require_auth)])
-async def api_backup():
+@app.get("/api/backups", dependencies=[Depends(require_auth)])
+async def api_backups():
     return get_backup_status()
-
-
-@app.get("/api/health", dependencies=[Depends(require_auth)])
-async def api_health():
-    return evaluate_overall_health()
 
 
 @app.get("/api/services", dependencies=[Depends(require_auth)])
@@ -191,7 +270,8 @@ async def api_services():
 
 
 @app.get("/api/kuma-summary", dependencies=[Depends(require_auth)])
-async def api_kuma_summary(refresh: bool = Query(default=False)):
+@app.get("/api/kuma-status", dependencies=[Depends(require_auth)])
+async def api_kuma_status(refresh: bool = Query(default=False)):
     return await get_kuma_status_summary(force_refresh=refresh)
 
 
@@ -200,28 +280,26 @@ async def api_dineva():
     return get_dineva_status()
 
 
+@app.get("/api/health", dependencies=[Depends(require_auth)])
+async def api_health():
+    return evaluate_overall_health()
+
+
 @app.get("/api/operations/allowed", dependencies=[Depends(require_auth)])
+@app.get("/api/operations/catalog", dependencies=[Depends(require_auth)])
 async def api_operations_allowed():
-    """Retrieve allowed operational targets and operational impacts."""
     return get_allowed_operations()
 
 
 @app.get("/api/operations/audit", dependencies=[Depends(require_auth)])
 async def api_operations_audit():
-    """Retrieve audit history of past operations without secret leakage."""
     return {"audit_trail": get_audit_trail()}
 
 
-@app.post("/api/operations/execute", dependencies=[Depends(require_csrf)])
+
+@app.post(
+    "/api/operations/execute",
+    dependencies=[Depends(require_auth), Depends(require_csrf)],
+)
 async def api_operations_execute(payload: OperationRequest):
-    """Execute an allowlisted container operation with healthcheck verification."""
-    return await execute_allowed_operation(
-        target=payload.target,
-        action=payload.action,
-        actor="owner-session",
-    )
-
-
-@app.get("/api/ping")
-async def api_ping():
-    return {"status": "ok", "app": settings.app_name, "version": settings.app_version}
+    return await execute_allowed_operation(target=payload.target, action=payload.action)

@@ -1,17 +1,16 @@
 import asyncio
-import logging
-import time
-import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List
-import httpx
-from fastapi import HTTPException, status
-
-from app.config import settings
-from app.services.docker_service import get_docker_client
-
 import json
+import logging
 import os
+import time
+from typing import Any, Dict, List, Optional
+import uuid
+
+from fastapi import HTTPException, status
+import httpx
+from app.config import settings
+from app.services.docker_service import get_container_inspect
 
 logger = logging.getLogger("operations_service")
 
@@ -48,6 +47,24 @@ def _sanitize_audit_error(error_msg: str) -> str:
     return cleaned[:300]
 
 
+def _check_audit_writable() -> bool:
+    """Pre-flight check: ensure audit trail destination is writable before performing mutations (Codex R4)."""
+    audit_file = settings.ops_audit_file
+    target_dir = os.path.dirname(os.path.abspath(audit_file))
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        # Test file write permissions
+        test_file = os.path.join(target_dir, f".write_test_{uuid.uuid4().hex[:6]}")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("probe")
+        if os.path.exists(test_file):
+            os.remove(test_file)
+        return True
+    except Exception as e:
+        logger.critical(f"DURABILITY PRE-CHECK FAILED: Audit directory {target_dir} is not writable: {e}")
+        return False
+
+
 def _load_audit_trail_from_disk() -> List[Dict[str, Any]]:
     """Load persistent audit entries from disk."""
     audit_file = settings.ops_audit_file
@@ -62,8 +79,8 @@ def _load_audit_trail_from_disk() -> List[Dict[str, Any]]:
     return []
 
 
-def _save_audit_trail_to_disk() -> None:
-    """Write in-memory audit trail to disk atomically."""
+def _save_audit_trail_to_disk() -> bool:
+    """Write in-memory audit trail to disk atomically. Returns True on success, False on failure (Codex R4)."""
     audit_file = settings.ops_audit_file
     try:
         os.makedirs(os.path.dirname(os.path.abspath(audit_file)), exist_ok=True)
@@ -71,21 +88,28 @@ def _save_audit_trail_to_disk() -> None:
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(_audit_trail[:MAX_AUDIT_ENTRIES], f, indent=2)
         os.replace(tmp_file, audit_file)
+        return True
     except Exception as e:
-        logger.warning(f"Failed to write audit trail to {audit_file}: {e}")
+        logger.error(f"DURABILITY FAILURE: Failed to write audit trail to {audit_file}: {e}")
+        return False
 
 
 _audit_trail: List[Dict[str, Any]] = _load_audit_trail_from_disk()
 
 
-def _record_audit_entry(entry: Dict[str, Any]) -> None:
-    """Add an entry to audit trail, maintain retention limit, and persist."""
+def _record_audit_entry(entry: Dict[str, Any]) -> bool:
+    """Add an entry to audit trail, maintain retention limit, and persist with durability flag."""
     if "error" in entry:
         entry["error"] = _sanitize_audit_error(entry["error"])
     _audit_trail.insert(0, entry)
     while len(_audit_trail) > MAX_AUDIT_ENTRIES:
         _audit_trail.pop()
-    _save_audit_trail_to_disk()
+
+    persisted = _save_audit_trail_to_disk()
+    entry["audit_persisted"] = persisted
+    if not persisted:
+        logger.warning(f"Audit entry {entry.get('correlation_id')} recorded in-memory only (disk write failed).")
+    return persisted
 
 
 def get_allowed_operations() -> Dict[str, Any]:
@@ -106,26 +130,17 @@ def get_audit_trail() -> List[Dict[str, Any]]:
 
 
 async def _poll_container_health(container_name: str, max_wait_seconds: int = 15) -> bool:
-    """Actively verify that the container returned to running and healthy state."""
-    client = get_docker_client()
-    if not client:
-        logger.warning(f"Docker client unavailable when verifying health for '{container_name}'.")
-        return False
-
+    """Actively verify that the container returned to running and healthy state via executor/inspect."""
     start_wait = time.time()
     while time.time() - start_wait < max_wait_seconds:
-        try:
-            c = client.containers.get(container_name)
-            is_running = c.status.lower() == "running"
-            state = c.attrs.get("State", {})
-            health = state.get("Health", {}).get("Status", "unknown").lower()
+        inspect = get_container_inspect(container_name)
+        if inspect:
+            is_running = inspect.get("is_running", False)
+            health = inspect.get("health", "unknown").lower()
 
             # Healthy or running without failing healthcheck
             if is_running and health in ("healthy", "unknown"):
                 return True
-        except Exception as e:
-            logger.warning(f"Health verification poll error for {container_name}: {e}")
-
         await asyncio.sleep(1.0)
 
     return False
@@ -148,25 +163,34 @@ async def execute_allowed_operation(
         )
 
     if action not in ALLOWED_OPERATIONS[target]:
-        logger.warning(f"Unsupported action '{action}' on target '{target}' by {actor}")
+        logger.warning(f"Forbidden operation attempt with unapproved action '{action}' on target '{target}' by {actor}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Aksi '{action}' tidak didukung untuk target '{target}'.",
         )
 
-    # 2. Rate limit and concurrency check
+    # 2. Rate limiting check (e.g. 30 seconds interval between mutations)
     now = time.time()
     elapsed = now - _last_operation_timestamp
     if elapsed < settings.ops_rate_limit_seconds:
-        wait_remaining = int(settings.ops_rate_limit_seconds - elapsed)
+        remaining = int(settings.ops_rate_limit_seconds - elapsed)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Batas waktu antar-operasi adalah {settings.ops_rate_limit_seconds}s. Harap tunggu {wait_remaining}s lagi.",
+            detail=f"Batas waktu antar-operasi ({settings.ops_rate_limit_seconds}s) belum terpenuhi. Tunggu {remaining} detik sebelum mengeksekusi operasi berikutnya.",
         )
 
+
+    # 3. Pre-flight check: ensure audit trail destination is writable before performing mutation (Codex R4)
+    if not _check_audit_writable():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Penyimpanan audit trail tidak dapat ditulis (storage read-only / unwriteable). Operasi dibatalkan demi integritas audit.",
+        )
+
+    # 4. Anti-concurrency lock
     if _ops_lock.locked():
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Operasi lain sedang berlangsung. Mohon tunggu proses selesai.",
         )
 
@@ -177,7 +201,7 @@ async def execute_allowed_operation(
         _last_operation_timestamp = time.time()
         logger.info(f"Starting operation [{correlation_id}]: {action} on {target} by {actor}")
 
-        # 3. Call dedicated backend executor (isolated internal service)
+        # 5. Call dedicated backend executor (isolated internal service)
         executor_success = False
         executor_error = None
 
@@ -220,7 +244,7 @@ async def execute_allowed_operation(
                 detail=f"Gagal mengeksekusi operasi: {executor_error or 'Koneksi ke executor gagal'}",
             )
 
-        # 4. Verify post-operation health (request accepted != operation verified)
+        # 6. Verify post-operation health (request accepted != operation verified)
         health_verified = await _poll_container_health(target, max_wait_seconds=15)
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -235,7 +259,7 @@ async def execute_allowed_operation(
             "health_verified": health_verified,
             "duration_ms": duration_ms,
         }
-        _record_audit_entry(audit_entry)
+        persisted = _record_audit_entry(audit_entry)
 
         msg = (
             f"Layanan '{target}' berhasil di-restart dan terverifikasi sehat ({duration_ms}ms)."
@@ -250,6 +274,8 @@ async def execute_allowed_operation(
             "correlation_id": correlation_id,
             "health_verified": health_verified,
             "duration_ms": duration_ms,
+            "audit_persisted": persisted,
+            "persistence_warning": None if persisted else "Perhatian: Operasi berhasil namun penulisan berkas audit ke disk mengalami kendala.",
             "message": msg,
             "audit_entry": audit_entry,
         }

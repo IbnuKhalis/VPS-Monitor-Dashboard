@@ -1,19 +1,59 @@
+import json
 import logging
 import re
-from datetime import datetime
+import urllib.request
+import urllib.error
+from typing import Any, Dict, Optional
 import docker
 from app.config import settings
 
 logger = logging.getLogger("docker_service")
 
+MAX_LOG_CHARS = 50000
+CONTAINER_NAME_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
+
+SECRET_PATTERNS = [
+    (re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.\~]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"((?:X-Ops-Token|OPS_PROXY_TOKEN)\s*[:=]\s*)[A-Za-z0-9_\-]+", re.IGNORECASE), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api_?key|private_?key))(\s*[:=]\s*)(['\"]?)([^\'\"\s\r\n]{4,})\3"), r"\1\2\3[REDACTED]\3"),
+    (re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----"), "[PRIVATE KEY REDACTED]"),
+]
+
+
+def sanitize_log_output(text: str) -> str:
+    """Sanitize sensitive credentials, tokens, and private keys from container logs."""
+    if not text:
+        return ""
+    sanitized = text
+    for pattern, replacement in SECRET_PATTERNS:
+        sanitized = pattern.sub(replacement, sanitized)
+    return sanitized
+
 
 def get_docker_client():
-    """Attempt to initialize Docker client from environment or socket path."""
+    """Attempt to initialize Docker client from environment or socket path (local dev fallback)."""
     try:
         return docker.from_env(timeout=3)
     except Exception as e:
-        logger.warning(f"Could not connect to Docker socket: {e}")
+        logger.debug(f"Could not connect to local Docker socket: {e}")
         return None
+
+
+def _call_executor(path: str, timeout: float = 4.0) -> Optional[Dict[str, Any]]:
+    """Call restricted ops executor over internal network."""
+    url = f"{settings.ops_executor_url.rstrip('/')}{path}"
+    headers = {
+        "X-Executor-Token": settings.ops_executor_token,
+        "User-Agent": "VPS-Mission-Control-App/1.1",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if response.status == 200:
+                return json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        logger.debug(f"Ops-executor call {path} failed: {e}")
+    return None
 
 
 def calculate_cpu_percent(stats: dict) -> float:
@@ -49,7 +89,6 @@ def calculate_memory_stats(stats: dict) -> dict:
         usage = mem_stats.get("usage", 0)
         limit = mem_stats.get("limit", 1)
 
-        # Subtract cache memory if available (standard docker stats formula)
         stats_detail = mem_stats.get("stats", {})
         cache = stats_detail.get("inactive_file", stats_detail.get("total_inactive_file", 0))
         actual_usage = max(0, usage - cache)
@@ -64,13 +103,19 @@ def calculate_memory_stats(stats: dict) -> dict:
         return {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
 
 
-def get_containers_summary():
-    """Retrieve list and status of all Docker containers."""
+def get_containers_summary() -> Dict[str, Any]:
+    """Retrieve list and status of all Docker containers via ops-executor or local fallback."""
+    # 1. Primary least-privilege route: query isolated ops-executor daemon
+    executor_data = _call_executor("/containers")
+    if executor_data and executor_data.get("available") is True:
+        return executor_data
+
+    # 2. Local fallback if socket exists (unit tests / local dev)
     client = get_docker_client()
     if not client:
         return {
             "available": False,
-            "error": "Docker socket not accessible or Docker is not running",
+            "error": "Docker socket not accessible and ops-executor unreachable",
             "containers": [],
             "running_count": 0,
             "total_count": 0,
@@ -87,13 +132,11 @@ def get_containers_summary():
             if is_running:
                 running_count += 1
 
-            # Health check status if container has HEALTHCHECK defined
             health = "unknown"
             state_dict = c.attrs.get("State", {})
             if "Health" in state_dict:
                 health = state_dict["Health"].get("Status", "unknown")
 
-            # Quick stats for running containers
             mem_data = {"used_mb": 0.0, "limit_mb": 0.0, "percent": 0.0}
             cpu_pct = 0.0
 
@@ -105,7 +148,6 @@ def get_containers_summary():
                 except Exception:
                     pass
 
-            # Port mappings
             ports_raw = c.attrs.get("NetworkSettings", {}).get("Ports", {})
             ports_summary = []
             if ports_raw:
@@ -132,9 +174,7 @@ def get_containers_summary():
                 }
             )
 
-        # Sort: running first, then alphabetically by name
         result.sort(key=lambda x: (not x["is_running"], x["name"]))
-
         return {
             "available": True,
             "containers": result,
@@ -142,7 +182,7 @@ def get_containers_summary():
             "total_count": len(containers),
         }
     except Exception as e:
-        logger.error(f"Error fetching container summaries: {e}")
+        logger.error(f"Error fetching container summaries from local client: {e}")
         return {
             "available": False,
             "error": str(e),
@@ -152,29 +192,8 @@ def get_containers_summary():
         }
 
 
-MAX_LOG_CHARS = 50000
-CONTAINER_NAME_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
-
-SECRET_PATTERNS = [
-    (re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.\~]+", re.IGNORECASE), r"\1[REDACTED]"),
-    (re.compile(r"((?:X-Ops-Token|OPS_PROXY_TOKEN)\s*[:=]\s*)[A-Za-z0-9_\-]+", re.IGNORECASE), r"\1[REDACTED]"),
-    (re.compile(r"(?i)\b([A-Za-z0-9_]*(?:password|passwd|secret|token|api_?key|private_?key))(\s*[:=]\s*)(['\"]?)([^\'\"\s\r\n]{4,})\3"), r"\1\2\3[REDACTED]\3"),
-    (re.compile(r"-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----"), "[PRIVATE KEY REDACTED]"),
-]
-
-
-def sanitize_log_output(text: str) -> str:
-    """Sanitize sensitive credentials, tokens, and private keys from container logs."""
-    if not text:
-        return ""
-    sanitized = text
-    for pattern, replacement in SECRET_PATTERNS:
-        sanitized = pattern.sub(replacement, sanitized)
-    return sanitized
-
-
 def get_container_logs(container_name: str, tail: int = 60) -> dict:
-    """Retrieve recent log lines for a specific container with sanitization and size cap."""
+    """Retrieve recent log lines for a container with sanitization and size cap."""
     if not container_name or not CONTAINER_NAME_REGEX.match(container_name):
         return {
             "success": False,
@@ -182,23 +201,27 @@ def get_container_logs(container_name: str, tail: int = 60) -> dict:
             "logs": "",
         }
 
+    # 1. Primary route: ops-executor daemon
+    executor_data = _call_executor(f"/containers/{container_name}/logs?tail={tail}")
+    if executor_data and "success" in executor_data:
+        return executor_data
+
+    # 2. Local fallback if socket exists
     client = get_docker_client()
     if not client:
-        return {"success": False, "error": "Docker socket not accessible", "logs": ""}
+        return {"success": False, "error": "Docker socket not accessible and ops-executor unreachable", "logs": ""}
 
     try:
         container = client.containers.get(container_name)
         logs_bytes = container.logs(tail=tail, timestamps=True)
         logs_text = logs_bytes.decode("utf-8", errors="replace")
 
-        # Enforce size limit
         truncated_notice = ""
         if len(logs_text) > MAX_LOG_CHARS:
             logs_text = logs_text[-MAX_LOG_CHARS:]
             truncated_notice = "[... Log dipotong demi keamanan & batas ukuran (maks 50KB) ...]\n"
 
         sanitized_logs = truncated_notice + sanitize_log_output(logs_text)
-
         return {
             "success": True,
             "name": container.name,
@@ -209,3 +232,36 @@ def get_container_logs(container_name: str, tail: int = 60) -> dict:
         return {"success": False, "error": f"Container '{container_name}' not found", "logs": ""}
     except Exception as e:
         return {"success": False, "error": str(e), "logs": ""}
+
+
+def get_container_inspect(container_name: str) -> Optional[Dict[str, Any]]:
+    """Retrieve status and health inspection for a specific container."""
+    if not container_name or not CONTAINER_NAME_REGEX.match(container_name):
+        return None
+
+    # 1. Primary route: ops-executor
+    inspect_data = _call_executor(f"/containers/{container_name}/inspect")
+    if inspect_data and inspect_data.get("success") is True:
+        return inspect_data
+
+    # 2. Local fallback
+    client = get_docker_client()
+    if not client:
+        return None
+
+    try:
+        c = client.containers.get(container_name)
+        state = c.attrs.get("State", {})
+        is_running = c.status.lower() == "running"
+        health = state.get("Health", {}).get("Status", "unknown").lower()
+        return {
+            "success": True,
+            "id": c.short_id,
+            "name": c.name,
+            "status": c.status,
+            "is_running": is_running,
+            "health": health,
+            "state": state,
+        }
+    except Exception:
+        return None

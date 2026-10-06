@@ -4,10 +4,9 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from app.services.docker_service import (
-    get_docker_client,
-    calculate_cpu_percent,
-    calculate_memory_stats,
-    sanitize_log_output,
+    get_container_inspect,
+    get_container_logs,
+    get_containers_summary,
 )
 
 logger = logging.getLogger("dineva_service")
@@ -67,116 +66,81 @@ def _extract_safe_last_activity(raw_logs: str) -> Dict[str, Any]:
 
 
 def get_dineva_status() -> Dict[str, Any]:
-    """Retrieve read-only telemetry for Dineva autonomous agent.
+    """Retrieve read-only telemetry for Dineva autonomous agent via ops-executor or fallback.
 
-    Enforces strict read-only boundary: no mutative commands, no secret exposure.
+    Enforces strict read-only boundary: no mutative commands, no secret exposure, no raw Docker socket.
     """
-    client = get_docker_client()
-    if not client:
-        return {
-            "available": False,
-            "agent_id": "digitalneeds04",
-            "name": "Dineva",
-            "role": "Autonomous VPS Worker & Second Brain Custodian",
-            "status": "UNKNOWN",
-            "is_running": False,
-            "message": "Docker socket tidak dapat diakses",
-            "last_activity": {
-                "timestamp": None,
-                "component": "idle",
-                "summary": "Docker socket tidak dapat diakses",
-            },
-            "sidecar": {
-                "name": SIDECAR_CONTAINER_NAME,
-                "status": "OFFLINE",
-                "is_running": False,
-                "port": 9091,
-            },
-            "mode": "READ_ONLY",
-            "mutations_allowed": False,
-        }
+    # 1. Query containers summary to get resource metrics without touching raw docker socket
+    summary = get_containers_summary()
+    containers_by_name = {c["name"]: c for c in summary.get("containers", [])} if summary.get("available") else {}
 
-    # 1. Inspect main runtime container
-    runtime_info = {
-        "status": "STOPPED",
-        "is_running": False,
-        "uptime": "-",
-        "started_at": None,
-        "restart_count": 0,
-        "cpu_percent": 0.0,
-        "memory": {"used_mb": 0.0, "percent": 0.0},
-        "last_activity": {
-            "timestamp": None,
-            "component": "idle",
-            "summary": "Runtime offline",
-        },
-    }
+    runtime_c = containers_by_name.get(DINEVA_CONTAINER_NAME)
+    sidecar_c = containers_by_name.get(SIDECAR_CONTAINER_NAME)
 
-    try:
-        container = client.containers.get(DINEVA_CONTAINER_NAME)
-        status_raw = container.status.lower()
-        is_running = status_raw == "running"
-        runtime_info["is_running"] = is_running
-        runtime_info["status"] = "ONLINE" if is_running else "STOPPED"
-        runtime_info["restart_count"] = container.attrs.get("State", {}).get("RestartCount", 0)
-        started_at = container.attrs.get("State", {}).get("StartedAt", "")
+    # 2. Inspect runtime
+    runtime_inspect = get_container_inspect(DINEVA_CONTAINER_NAME)
+    is_running = False
+    started_at = None
+    restart_count = 0
+
+    if runtime_inspect:
+        is_running = runtime_inspect.get("is_running", False)
+        state = runtime_inspect.get("state", {})
+        restart_count = state.get("RestartCount", 0)
+        started_at = state.get("StartedAt", "")
         if started_at:
-            runtime_info["started_at"] = started_at[:19].replace("T", " ")
+            started_at = started_at[:19].replace("T", " ")
+    elif runtime_c:
+        is_running = runtime_c.get("is_running", False)
+        restart_count = runtime_c.get("restart_count", 0)
 
-        if is_running:
-            try:
-                stats = container.stats(stream=False)
-                runtime_info["cpu_percent"] = calculate_cpu_percent(stats)
-                mem = calculate_memory_stats(stats)
-                runtime_info["memory"] = {
-                    "used_mb": mem.get("used_mb", 0.0),
-                    "percent": mem.get("percent", 0.0),
-                }
-            except Exception:
-                pass
+    # Metrics
+    cpu_percent = runtime_c.get("cpu_percent", 0.0) if runtime_c else 0.0
+    mem_info = runtime_c.get("memory", {"used_mb": 0.0, "percent": 0.0}) if runtime_c else {"used_mb": 0.0, "percent": 0.0}
 
-            # Safe log inspection (last 15 lines max)
-            try:
-                raw_bytes = container.logs(tail=15, timestamps=False)
-                raw_text = raw_bytes.decode("utf-8", errors="replace")
-                runtime_info["last_activity"] = _extract_safe_last_activity(raw_text)
-            except Exception as e:
-                logger.warning(f"Could not read Dineva logs: {e}")
+    # Safe log inspection
+    last_act = {
+        "timestamp": None,
+        "component": "idle",
+        "summary": "Runtime offline" if not is_running else "Menunggu aktivitas terjadwal",
+    }
+    if is_running:
+        log_res = get_container_logs(DINEVA_CONTAINER_NAME, tail=15)
+        if log_res.get("success"):
+            last_act = _extract_safe_last_activity(log_res.get("logs", ""))
 
-    except Exception:
-        # Container not found or stopped
-        pass
+    # 3. Inspect sidecar
+    sidecar_inspect = get_container_inspect(SIDECAR_CONTAINER_NAME)
+    sidecar_running = False
+    if sidecar_inspect:
+        sidecar_running = sidecar_inspect.get("is_running", False)
+    elif sidecar_c:
+        sidecar_running = sidecar_c.get("is_running", False)
 
-    # 2. Inspect ops sidecar container
     sidecar_info = {
         "name": SIDECAR_CONTAINER_NAME,
-        "status": "OFFLINE",
-        "is_running": False,
+        "status": "ONLINE" if sidecar_running else "OFFLINE",
+        "is_running": sidecar_running,
         "port": 9091,
     }
 
-    try:
-        sidecar_c = client.containers.get(SIDECAR_CONTAINER_NAME)
-        sidecar_running = sidecar_c.status.lower() == "running"
-        sidecar_info["is_running"] = sidecar_running
-        sidecar_info["status"] = "ONLINE" if sidecar_running else "OFFLINE"
-    except Exception:
-        pass
-
-    # 3. Compile sanitized response
+    # 4. Compile sanitized response
     return {
-        "available": True,
+        "available": summary.get("available", False) or (runtime_inspect is not None),
         "agent_id": "digitalneeds04",
         "name": "Dineva",
         "role": "Autonomous VPS Worker & Second Brain Custodian",
         "platform": "Hermes Gateway",
-        "status": runtime_info["status"],
-        "is_running": runtime_info["is_running"],
-        "started_at": runtime_info["started_at"],
-        "restart_count": runtime_info["restart_count"],
-        "cpu_percent": runtime_info["cpu_percent"],
-        "memory": runtime_info["memory"],
-        "last_activity": runtime_info["last_activity"],
+        "status": "ONLINE" if is_running else "STOPPED",
+        "is_running": is_running,
+        "started_at": started_at,
+        "restart_count": restart_count,
+        "cpu_percent": cpu_percent,
+        "memory": {
+            "used_mb": mem_info.get("used_mb", 0.0),
+            "percent": mem_info.get("percent", 0.0),
+        },
+        "last_activity": last_act,
         "sidecar": sidecar_info,
         "mode": "READ_ONLY",
         "mutations_allowed": False,
