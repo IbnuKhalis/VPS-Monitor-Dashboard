@@ -14,7 +14,25 @@ import docker
 
 PORT = int(os.environ.get("OPS_EXECUTOR_PORT", "9092"))
 HOST = os.environ.get("OPS_EXECUTOR_HOST", "0.0.0.0")
-AUTH_TOKEN = os.environ.get("OPS_EXECUTOR_TOKEN", "vps-ops-executor-internal-secret-token-prod")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").lower()
+AUTH_TOKEN = os.environ.get("OPS_EXECUTOR_TOKEN", "")
+
+DISALLOWED_TOKENS = {
+    "",
+    "vps-ops-executor-internal-secret-token-prod",
+    "change-me",
+    "default-token",
+    "secret-token-prod",
+}
+
+
+def validate_executor_configuration() -> None:
+    """Validate executor auth token in production mode (Codex S1)."""
+    if ENVIRONMENT in ("production", "prod"):
+        if not AUTH_TOKEN or AUTH_TOKEN in DISALLOWED_TOKENS or "secret-token-prod" in AUTH_TOKEN.lower() or len(AUTH_TOKEN) < 16:
+            logger.critical("CRITICAL: OPS_EXECUTOR_TOKEN cannot be empty or default fallback in production mode.")
+            sys.exit(1)
+
 
 ALLOWED_TARGETS = frozenset(["cv-builder"])
 ALLOWED_ACTIONS = frozenset(["restart"])
@@ -103,11 +121,13 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
 
     def _check_auth(self) -> bool:
         if not AUTH_TOKEN:
-            return True
+            logger.error(f"Executor misconfiguration: OPS_EXECUTOR_TOKEN is not set. Rejecting call from {self.client_address}")
+            self._send_json(500, {"error": "server_misconfiguration", "message": "OPS_EXECUTOR_TOKEN is not configured on executor"})
+            return False
         token = self.headers.get("X-Executor-Token", "")
-        if token != AUTH_TOKEN:
+        if not token or token != AUTH_TOKEN:
             logger.warning(f"Unauthorized executor call from {self.client_address}")
-            self._send_json(401, {"error": "unauthorized", "message": "Invalid X-Executor-Token"})
+            self._send_json(401, {"error": "unauthorized", "message": "Invalid or missing X-Executor-Token"})
             return False
         return True
 
@@ -334,6 +354,7 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
+    validate_executor_configuration()
     server = HTTPServer((HOST, PORT), RestrictedExecutorHandler)
     logger.info(f"Restricted Ops Executor starting on {HOST}:{PORT}")
     logger.info(f"Allowed targets: {list(ALLOWED_TARGETS)}")

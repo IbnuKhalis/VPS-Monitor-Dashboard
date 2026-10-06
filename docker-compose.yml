@@ -6,15 +6,15 @@ services:
     container_name: vps-monitor-dashboard
     restart: unless-stopped
     environment:
-      - DASHBOARD_PIN=${DASHBOARD_PIN:-123456}
-      - SECRET_KEY=${SECRET_KEY:-vps-monitoring-secret-key-prod-random-89234}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DASHBOARD_PIN=${DASHBOARD_PIN}
+      - SECRET_KEY=${SECRET_KEY}
       - BACKUP_DIR=/opt/backups
       - OPS_EXECUTOR_URL=http://ops-executor:9092
-      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN:-vps-ops-executor-internal-secret-token-prod}
+      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN}
     volumes:
       - /opt/backups:/opt/backups:ro
       - ./data:/app/data
-
 
     networks:
       - proxy-network
@@ -27,7 +27,8 @@ services:
     container_name: vps-ops-executor
     restart: unless-stopped
     environment:
-      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN:-vps-ops-executor-internal-secret-token-prod}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - OPS_EXECUTOR_TOKEN=${OPS_EXECUTOR_TOKEN}
       - ALLOWED_TARGETS=cv-builder
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

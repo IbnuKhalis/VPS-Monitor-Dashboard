@@ -73,6 +73,9 @@ def _load_audit_trail_from_disk() -> List[Dict[str, Any]]:
             with open(audit_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and "audit_persisted" not in item:
+                            item["audit_persisted"] = True
                     return data[:MAX_AUDIT_ENTRIES]
         except Exception as e:
             logger.warning(f"Failed to read audit trail file {audit_file}: {e}")
@@ -98,16 +101,19 @@ _audit_trail: List[Dict[str, Any]] = _load_audit_trail_from_disk()
 
 
 def _record_audit_entry(entry: Dict[str, Any]) -> bool:
-    """Add an entry to audit trail, maintain retention limit, and persist with durability flag."""
+    """Add an entry to audit trail, maintain retention limit, and persist with durability flag (Codex S4)."""
     if "error" in entry:
         entry["error"] = _sanitize_audit_error(entry["error"])
+
+    # Optimistically set audit_persisted: True so that serialized file on disk contains the flag (Codex S4)
+    entry["audit_persisted"] = True
     _audit_trail.insert(0, entry)
     while len(_audit_trail) > MAX_AUDIT_ENTRIES:
         _audit_trail.pop()
 
     persisted = _save_audit_trail_to_disk()
-    entry["audit_persisted"] = persisted
     if not persisted:
+        entry["audit_persisted"] = False
         logger.warning(f"Audit entry {entry.get('correlation_id')} recorded in-memory only (disk write failed).")
     return persisted
 

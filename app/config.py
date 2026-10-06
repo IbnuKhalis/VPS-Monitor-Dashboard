@@ -14,9 +14,10 @@ class Settings(BaseSettings):
     backup_dir: str = os.getenv("BACKUP_DIR", "/opt/backups")
     refresh_interval_seconds: int = 4
 
-    # Trusted Reverse Proxies (Codex R2)
-    # Comma-separated list of trusted IP/CIDR subnets (Caddy, Docker bridge, localhost)
-    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16")
+    # Trusted Reverse Proxies (Codex R2 & S2)
+    # Strictly scoped to loopback and local Docker bridge networks (Caddy container)
+    # Wide private subnets (10.0.0.0/8, 192.168.0.0/16) are strictly excluded to prevent spoofing from rogue peers.
+    trusted_proxies: str = os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1,172.16.0.0/12")
 
     # Uptime Kuma status page integration settings
     kuma_base_url: str = os.getenv("KUMA_BASE_URL", "http://uptime-kuma:3001")
@@ -46,11 +47,31 @@ settings = Settings()
 
 
 def validate_production_secrets():
-    """Ensure production deployment rejects default/placeholder credentials (Codex R5)."""
+    """Ensure production deployment rejects default/placeholder credentials (Codex R5 / S1)."""
     if settings.environment in ("production", "prod"):
-        if settings.dashboard_pin in ("123456", ""):
-            raise RuntimeError("CRITICAL: DASHBOARD_PIN cannot be default '123456' or empty in production mode.")
-        if "change-in-prod" in settings.secret_key or settings.secret_key == "":
-            raise RuntimeError("CRITICAL: SECRET_KEY cannot be default placeholder or empty in production mode.")
-        if "secret-token-prod" == settings.ops_executor_token or settings.ops_executor_token == "":
-            raise RuntimeError("CRITICAL: OPS_EXECUTOR_TOKEN must be explicitly set and secure in production mode.")
+        # 1. PIN Check
+        disallowed_pins = {"123456", "000000", "admin", ""}
+        if settings.dashboard_pin in disallowed_pins or len(settings.dashboard_pin) < 6:
+            raise RuntimeError("CRITICAL: DASHBOARD_PIN cannot be default '123456', empty, or less than 6 digits in production mode.")
+
+        # 2. Secret Key Check
+        disallowed_keys = {
+            "",
+            "super-secret-vps-monitoring-key-change-in-prod-78234",
+            "vps-monitoring-secret-key-prod-random-89234",
+            "change-this-in-production",
+            "secret",
+        }
+        if settings.secret_key in disallowed_keys or "change-in-prod" in settings.secret_key.lower() or "secret-key-prod" in settings.secret_key.lower():
+            raise RuntimeError("CRITICAL: SECRET_KEY cannot be default fallback or empty in production mode.")
+
+        # 3. Ops Executor Token Check
+        disallowed_tokens = {
+            "",
+            "vps-ops-executor-internal-secret-token-prod",
+            "change-me",
+            "default-token",
+            "secret-token-prod",
+        }
+        if settings.ops_executor_token in disallowed_tokens or "secret-token-prod" in settings.ops_executor_token.lower():
+            raise RuntimeError("CRITICAL: OPS_EXECUTOR_TOKEN cannot be default fallback or empty in production mode.")

@@ -827,11 +827,18 @@
                                             <span class="px-2 py-0.5 rounded text-[10px] uppercase font-semibold bg-amber-950/70 border border-amber-800/70 text-amber-300" x-text="item.action"></span>
                                         </td>
                                         <td class="py-2.5 px-2">
-                                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold"
-                                                  :class="item.success ? 'bg-emerald-950/70 border border-emerald-800/70 text-emerald-300' : 'bg-rose-950/70 border border-rose-800/70 text-rose-300'">
-                                                <span class="w-1.5 h-1.5 rounded-full" :class="item.success ? 'bg-emerald-400' : 'bg-rose-400'"></span>
-                                                <span x-text="item.success ? 'SUCCESS' : 'FAILED'"></span>
-                                            </span>
+                                            <div class="flex items-center gap-1.5 flex-wrap">
+                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold"
+                                                      :class="(item.status === 'SUCCESS' || item.health_verified || item.success) ? 'bg-emerald-950/70 border border-emerald-800/70 text-emerald-300' : 'bg-rose-950/70 border border-rose-800/70 text-rose-300'">
+                                                    <span class="w-1.5 h-1.5 rounded-full" :class="(item.status === 'SUCCESS' || item.health_verified || item.success) ? 'bg-emerald-400' : 'bg-rose-400'"></span>
+                                                    <span x-text="item.status || ((item.health_verified || item.success) ? 'SUCCESS' : 'FAILED')"></span>
+                                                </span>
+                                                <template x-if="item.audit_persisted === false">
+                                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950/90 border border-amber-600/80 text-amber-300" title="Hanya tersimpan di memori (gagal tulis disk)">
+                                                        MEM-ONLY
+                                                    </span>
+                                                </template>
+                                            </div>
                                         </td>
                                         <td class="py-2.5 px-2 text-slate-400 tabular-nums" x-text="(item.duration_ms || 0) + 'ms'"></td>
                                         <td class="py-2.5 px-2 text-cyan-400/90 text-[11px]" x-text="item.correlation_id"></td>
@@ -960,6 +967,18 @@
                      :class="opResult?.success ? 'bg-emerald-950/70 border-emerald-700 text-emerald-200' : 'bg-rose-950/70 border-rose-700 text-rose-200'">
                     <div class="font-bold" x-text="opResult?.message"></div>
                     <div class="text-[10px] opacity-80 mt-1" x-text="'Correlation ID: ' + (opResult?.correlation_id || '-') + ' | Durasi: ' + (opResult?.duration_ms || 0) + 'ms'"></div>
+
+                    <!-- Persistence / Durability Warning (Codex S4) -->
+                    <div x-show="opResult?.audit_persisted === false || opResult?.persistence_warning"
+                         class="mt-2.5 p-2.5 rounded-lg bg-amber-950/90 border border-amber-600/80 text-amber-200 text-[11px] font-sans flex items-start gap-2 shadow-sm">
+                        <svg class="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        <div>
+                            <span class="font-bold text-amber-300">Peringatan Durabilitas:</span>
+                            <span x-text="opResult?.persistence_warning || 'Operasi berhasil dieksekusi, namun penulisan log audit ke disk mengalami kegagalan (tersimpan di memori saja).'"></span>
+                        </div>
+                    </div>
                 </div>
 
                 <div x-show="opError" class="p-3.5 rounded-xl bg-rose-950/80 border border-rose-700 text-rose-200 text-xs">
@@ -1390,7 +1409,7 @@
                             })
                         });
                         const data = await res.json();
-                        if (res.ok && data.success) {
+                        if (res.ok) {
                             this.opResult = data;
                             await Promise.all([
                                 this.fetchContainersAndBackup(),

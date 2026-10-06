@@ -530,18 +530,151 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
             self.assertIn("Sisa percobaan: 4", resp_b.json()["detail"])
 
     def test_production_mode_rejects_default_credentials(self):
-        # Codex R5: Production startup rejects default placeholder secrets
+        # Codex R5 & S1: Production startup rejects default placeholder secrets separately
         from app.config import validate_production_secrets
         orig_env = settings.environment
         orig_pin = settings.dashboard_pin
+        orig_key = settings.secret_key
+        orig_token = settings.ops_executor_token
+
+        valid_prod_pin = "87261942"
+        valid_prod_key = "prod-strong-entropy-secret-key-991823712893712"
+        valid_prod_token = "prod-strong-executor-token-1123498712398"
+
         try:
             settings.environment = "production"
-            settings.dashboard_pin = "123456"
-            with self.assertRaises(RuntimeError):
-                validate_production_secrets()
+
+            # 1. PIN rejections (default, empty, short, zeros)
+            for bad_pin in ("123456", "000000", "admin", "", "12345"):
+                settings.dashboard_pin = bad_pin
+                settings.secret_key = valid_prod_key
+                settings.ops_executor_token = valid_prod_token
+                with self.assertRaises(RuntimeError, msg=f"PIN {bad_pin} should be rejected"):
+                    validate_production_secrets()
+
+            # 2. Secret Key rejections (Compose fallback, placeholder, empty)
+            for bad_key in (
+                "",
+                "super-secret-vps-monitoring-key-change-in-prod-78234",
+                "vps-monitoring-secret-key-prod-random-89234",
+                "change-this-in-production",
+                "secret",
+            ):
+                settings.dashboard_pin = valid_prod_pin
+                settings.secret_key = bad_key
+                settings.ops_executor_token = valid_prod_token
+                with self.assertRaises(RuntimeError, msg=f"Secret key {bad_key} should be rejected"):
+                    validate_production_secrets()
+
+            # 3. Ops Executor Token rejections (Compose fallback, default token, empty)
+            for bad_token in (
+                "",
+                "vps-ops-executor-internal-secret-token-prod",
+                "change-me",
+                "default-token",
+                "secret-token-prod",
+            ):
+                settings.dashboard_pin = valid_prod_pin
+                settings.secret_key = valid_prod_key
+                settings.ops_executor_token = bad_token
+                with self.assertRaises(RuntimeError, msg=f"Executor token {bad_token} should be rejected"):
+                    validate_production_secrets()
+
+            # 4. Valid production settings succeed
+            settings.dashboard_pin = valid_prod_pin
+            settings.secret_key = valid_prod_key
+            settings.ops_executor_token = valid_prod_token
+            # Must not raise
+            validate_production_secrets()
+
         finally:
             settings.environment = orig_env
             settings.dashboard_pin = orig_pin
+            settings.secret_key = orig_key
+            settings.ops_executor_token = orig_token
+
+    def test_ops_executor_auth_and_config_validation(self):
+        # Codex S1: Executor rejects unconfigured token and enforces auth headers
+        import ops_executor
+
+        # 1. Test validate_executor_configuration in production mode
+        orig_exec_env = ops_executor.ENVIRONMENT
+        orig_exec_token = ops_executor.AUTH_TOKEN
+        try:
+            ops_executor.ENVIRONMENT = "production"
+            ops_executor.AUTH_TOKEN = ""
+            with self.assertRaises(SystemExit):
+                ops_executor.validate_executor_configuration()
+
+            ops_executor.AUTH_TOKEN = "vps-ops-executor-internal-secret-token-prod"
+            with self.assertRaises(SystemExit):
+                ops_executor.validate_executor_configuration()
+
+            # Valid token does not exit
+            ops_executor.AUTH_TOKEN = "valid-secure-token-length-greater-than-16"
+            ops_executor.validate_executor_configuration()
+        finally:
+            ops_executor.ENVIRONMENT = orig_exec_env
+            ops_executor.AUTH_TOKEN = orig_exec_token
+
+        # 2. Test _check_auth method
+        class MockHandler:
+            def __init__(self, headers, client_address=("127.0.0.1", 12345)):
+                self.headers = headers
+                self.client_address = client_address
+                self.sent_status = None
+                self.sent_payload = None
+
+            def _send_json(self, status, payload):
+                self.sent_status = status
+                self.sent_payload = payload
+
+        # When AUTH_TOKEN is empty: must reject with 500
+        ops_executor.AUTH_TOKEN = ""
+        handler_no_secret = MockHandler({"X-Executor-Token": "anything"})
+        self.assertFalse(ops_executor.RestrictedExecutorHandler._check_auth(handler_no_secret))
+        self.assertEqual(handler_no_secret.sent_status, 500)
+
+        # When AUTH_TOKEN is set: reject wrong token with 401
+        ops_executor.AUTH_TOKEN = "test-secret-token-998877"
+        handler_wrong = MockHandler({"X-Executor-Token": "wrong-token"})
+        self.assertFalse(ops_executor.RestrictedExecutorHandler._check_auth(handler_wrong))
+        self.assertEqual(handler_wrong.sent_status, 401)
+
+        # When AUTH_TOKEN matches: accept with True
+        handler_correct = MockHandler({"X-Executor-Token": "test-secret-token-998877"})
+        self.assertTrue(ops_executor.RestrictedExecutorHandler._check_auth(handler_correct))
+
+    def test_proxy_allowlist_boundaries_and_spoof_defense(self):
+        # Codex S2: Allowlist strictly covers 127.0.0.1, ::1, 172.16.0.0/12; rejects 10.0.0.0/8 and 192.168.0.0/16
+        from app.main import is_trusted_proxy_peer, get_client_ip
+        from unittest.mock import MagicMock
+
+        # 1. Peer trust boundaries
+        self.assertFalse(is_trusted_proxy_peer("10.123.45.67"))
+        self.assertFalse(is_trusted_proxy_peer("10.0.0.1"))
+        self.assertFalse(is_trusted_proxy_peer("192.168.1.100"))
+        self.assertFalse(is_trusted_proxy_peer("8.8.8.8"))
+        self.assertFalse(is_trusted_proxy_peer("203.0.113.50"))
+
+        self.assertTrue(is_trusted_proxy_peer("127.0.0.1"))
+        self.assertTrue(is_trusted_proxy_peer("::1"))
+        self.assertTrue(is_trusted_proxy_peer("172.18.0.2"))  # Docker bridge network
+        self.assertTrue(is_trusted_proxy_peer("172.17.0.1"))
+
+        # 2. Spoof defense: Rogue private peer (10.123.45.67) cannot inject CF-Connecting-IP
+        mock_rogue_req = MagicMock()
+        mock_rogue_req.client.host = "10.123.45.67"
+        mock_rogue_req.headers = {"cf-connecting-ip": "1.1.1.1", "x-forwarded-for": "1.1.1.1"}
+        client_ip = get_client_ip(mock_rogue_req)
+        self.assertEqual(client_ip, "10.123.45.67")
+
+        # 3. Legitimate proxy (172.18.0.2): CF-Connecting-IP is honored
+        mock_proxy_req = MagicMock()
+        mock_proxy_req.client.host = "172.18.0.2"
+        mock_proxy_req.headers = {"cf-connecting-ip": "203.0.113.44"}
+        client_ip_legit = get_client_ip(mock_proxy_req)
+        self.assertEqual(client_ip_legit, "203.0.113.44")
 
     def test_audit_preflight_check_blocks_mutation_when_storage_unwritable(self):
         # Codex R4: Unwritable storage triggers 503 before contacting executor
@@ -549,7 +682,6 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
         login_resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
         token = login_resp.cookies.get(settings.session_cookie_name)
         csrf_token = create_csrf_token(token)
-
 
         with patch("app.services.operations_service._check_audit_writable", return_value=False):
             resp = self.client.post(
@@ -560,11 +692,18 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
             self.assertEqual(resp.status_code, 503)
             self.assertIn("Penyimpanan audit trail tidak dapat ditulis", resp.json()["detail"])
 
-    def test_audit_durability_flag_recorded_when_disk_write_fails(self):
-        # Codex R4: Disk write failure records audit_persisted=False without crash
-        from app.services.operations_service import _record_audit_entry
+    def test_audit_durability_disk_serialization_and_flag(self):
+        # Codex S4: Normal save serializes audit_persisted=True to disk; failure sets False
+        from app.services.operations_service import (
+            _record_audit_entry,
+            _load_audit_trail_from_disk,
+            reset_operations_state_for_tests,
+        )
+        import json
+
+        reset_operations_state_for_tests()
         test_entry = {
-            "correlation_id": "op-durability-probe",
+            "correlation_id": "op-serialization-probe",
             "timestamp": "2026-10-06T12:00:00Z",
             "actor": "owner-session",
             "target": "cv-builder",
@@ -573,10 +712,48 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
             "health_verified": True,
             "duration_ms": 150,
         }
+
+        # 1. Normal save: disk copy must have audit_persisted: True
+        persisted = _record_audit_entry(test_entry)
+        self.assertTrue(persisted)
+        self.assertTrue(test_entry["audit_persisted"])
+
+        # Read back directly from disk file
+        with open(settings.ops_audit_file, "r", encoding="utf-8") as f:
+            disk_entries = json.load(f)
+        self.assertTrue(len(disk_entries) > 0)
+        self.assertTrue(disk_entries[0].get("audit_persisted"), "Stored entry on disk must include audit_persisted: True")
+
+        # 2. Disk write failure scenario
+        fail_entry = {
+            "correlation_id": "op-fail-durability-probe",
+            "timestamp": "2026-10-06T12:01:00Z",
+            "actor": "owner-session",
+            "target": "cv-builder",
+            "action": "restart",
+            "status": "SUCCESS",
+            "health_verified": True,
+            "duration_ms": 160,
+        }
         with patch("app.services.operations_service._save_audit_trail_to_disk", return_value=False):
-            persisted = _record_audit_entry(test_entry)
-            self.assertFalse(persisted)
-            self.assertFalse(test_entry["audit_persisted"])
+            persisted_fail = _record_audit_entry(fail_entry)
+            self.assertFalse(persisted_fail)
+            self.assertFalse(fail_entry["audit_persisted"])
+
+    def test_html_modal_renders_durability_warning_and_mem_only_badge(self):
+        # Codex S4: HTML template includes durability warning in modal and MEM-ONLY badge in audit table
+        login_resp = self.client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+        self.assertEqual(login_resp.status_code, 200)
+        resp = self.client.get("/")
+        html = resp.text
+
+        # Verify modal persistence warning exists
+        self.assertIn("Peringatan Durabilitas:", html)
+        self.assertIn("opResult?.audit_persisted === false", html)
+
+        # Verify audit table MEM-ONLY badge exists
+        self.assertIn("MEM-ONLY", html)
+        self.assertIn("item.audit_persisted === false", html)
 
     def test_docker_telemetry_reads_from_ops_executor_without_raw_socket(self):
         # Codex R1: Web app queries ops-executor HTTP endpoints for telemetry
