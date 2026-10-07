@@ -5,11 +5,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import ipaddress
+import logging
 import os
 import socket
 import threading
 import time
 from typing import Dict, Any, List
+
+logger = logging.getLogger("dashboard")
 
 from app.config import settings, validate_production_secrets
 from app.auth import (
@@ -253,6 +256,7 @@ async def api_verify_pin(payload: PinRequest, request: Request, response: Respon
         if record["failed_attempts"] >= settings.pin_rate_limit_max_attempts:
             record["lockout_until"] = now + settings.pin_rate_limit_lockout_seconds
             _pin_attempts[client_ip] = record
+            logger.warning(f"SECURITY: PIN lockout activated for IP {client_ip} for {settings.pin_rate_limit_lockout_seconds}s")
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Batas percobaan PIN tercapai ({settings.pin_rate_limit_max_attempts} kali). Akses dikunci sementara selama {settings.pin_rate_limit_lockout_seconds} detik.",
@@ -261,6 +265,7 @@ async def api_verify_pin(payload: PinRequest, request: Request, response: Respon
 
         _pin_attempts[client_ip] = record
         remaining_attempts = settings.pin_rate_limit_max_attempts - record["failed_attempts"]
+        logger.warning(f"SECURITY: Failed PIN attempt for IP {client_ip} ({record['failed_attempts']}/{settings.pin_rate_limit_max_attempts})")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Kode PIN salah. Sisa percobaan: {remaining_attempts}.",
@@ -268,6 +273,7 @@ async def api_verify_pin(payload: PinRequest, request: Request, response: Respon
 
     # Successful PIN validation -> clear failed attempts
     _pin_attempts.pop(client_ip, None)
+    logger.info(f"SECURITY: Successful PIN authentication for IP {client_ip}")
 
     token = create_session_token()
     response.set_cookie(
