@@ -118,6 +118,8 @@ def calculate_memory_stats(stats: dict) -> dict:
 _telemetry_cache = None
 _telemetry_cache_time = 0.0
 _telemetry_lock = threading.Lock()
+_telemetry_fetch_lock = threading.Lock()
+_mutation_lock = threading.Lock()
 TELEMETRY_CACHE_TTL = 3.5  # seconds
 
 
@@ -245,35 +247,43 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
                     self._send_json(200, _telemetry_cache)
                     return
 
-            try:
-                containers = client.containers.list(all=True)
-                running_count = sum(1 for c in containers if c.status.lower() == "running")
-
-                result = []
-                max_w = min(12, max(1, len(containers)))
-                with ThreadPoolExecutor(max_workers=max_w) as pool:
-                    futures = [pool.submit(_collect_single_container_info, c) for c in containers]
-                    for f in as_completed(futures):
-                        try:
-                            result.append(f.result())
-                        except Exception as e:
-                            logger.error(f"Error gathering stats for container: {e}")
-
-                result.sort(key=lambda x: (not x["is_running"], x["name"]))
-                payload = {
-                    "available": True,
-                    "containers": result,
-                    "running_count": running_count,
-                    "total_count": len(containers),
-                }
+            # Synchronize collection so multiple concurrent callers don't duplicate work (Codex S5)
+            with _telemetry_fetch_lock:
+                now = time.time()
                 with _telemetry_lock:
-                    _telemetry_cache = payload
-                    _telemetry_cache_time = time.time()
+                    if _telemetry_cache and (now - _telemetry_cache_time < TELEMETRY_CACHE_TTL):
+                        self._send_json(200, _telemetry_cache)
+                        return
 
-                self._send_json(200, payload)
-            except Exception as e:
-                logger.error(f"Error listing containers: {e}")
-                self._send_json(500, {"available": False, "error": str(e), "containers": [], "running_count": 0, "total_count": 0})
+                try:
+                    containers = client.containers.list(all=True)
+                    running_count = sum(1 for c in containers if c.status.lower() == "running")
+
+                    result = []
+                    max_w = min(12, max(1, len(containers)))
+                    with ThreadPoolExecutor(max_workers=max_w) as pool:
+                        futures = [pool.submit(_collect_single_container_info, c) for c in containers]
+                        for f in as_completed(futures):
+                            try:
+                                result.append(f.result())
+                            except Exception as e:
+                                logger.error(f"Error gathering stats for container: {e}")
+
+                    result.sort(key=lambda x: (not x["is_running"], x["name"]))
+                    payload = {
+                        "available": True,
+                        "containers": result,
+                        "running_count": running_count,
+                        "total_count": len(containers),
+                    }
+                    with _telemetry_lock:
+                        _telemetry_cache = payload
+                        _telemetry_cache_time = time.time()
+
+                    self._send_json(200, payload)
+                except Exception as e:
+                    logger.error(f"Error listing containers: {e}")
+                    self._send_json(500, {"available": False, "error": str(e), "containers": [], "running_count": 0, "total_count": 0})
             return
 
         # 3. Read-only single container logs (/containers/{name}/logs)
@@ -387,10 +397,20 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 2. Execute Docker action
+        # 2. Execute Docker action with mutation serialization lock (Codex S5)
         client = get_docker()
         if not client:
             self._send_json(500, {"error": "docker_unavailable", "message": "Docker daemon unreachable"})
+            return
+
+        if not _mutation_lock.acquire(blocking=False):
+            logger.warning(f"AUDIT CONFLICT [{correlation_id}]: Concurrent mutation rejected for target '{target}'")
+            self._send_json(409, {
+                "success": False,
+                "error": "conflict",
+                "message": "Another container mutation is already in progress. Concurrent executions are rejected.",
+                "correlation_id": correlation_id,
+            })
             return
 
         try:
@@ -408,6 +428,8 @@ class RestrictedExecutorHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"AUDIT FAILURE [{correlation_id}]: Error restarting '{target}': {e}")
             self._send_json(500, {"success": False, "error": "restart_failed", "details": str(e)})
+        finally:
+            _mutation_lock.release()
 
 
 def run() -> None:

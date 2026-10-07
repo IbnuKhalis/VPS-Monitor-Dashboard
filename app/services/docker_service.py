@@ -41,8 +41,8 @@ def get_docker_client():
         return None
 
 
-def _call_executor(path: str, timeout: float = 4.0) -> Optional[Dict[str, Any]]:
-    """Call restricted ops executor over internal network."""
+def _call_executor(path: str, timeout: float = 10.0) -> Optional[Dict[str, Any]]:
+    """Call restricted ops executor over internal network with adequate budget for fleet stats (Codex S5)."""
     url = f"{settings.ops_executor_url.rstrip('/')}{path}"
     headers = {
         "X-Executor-Token": settings.ops_executor_token,
@@ -108,6 +108,7 @@ def calculate_memory_stats(stats: dict) -> dict:
 _summary_cache = None
 _summary_cache_time = 0.0
 _summary_lock = threading.Lock()
+_summary_fetch_lock = threading.Lock()
 SUMMARY_CACHE_TTL = 3.0  # seconds
 
 
@@ -127,24 +128,31 @@ def get_containers_summary() -> Dict[str, Any]:
         if _summary_cache is not None and (now - _summary_cache_time < SUMMARY_CACHE_TTL):
             return _summary_cache
 
-    # 1. Primary least-privilege route: query isolated ops-executor daemon
-    executor_data = _call_executor("/containers")
-    if executor_data and executor_data.get("available") is True:
+    # Synchronize fetching across concurrent calls so cold cache does not duplicate executor work (Codex S5)
+    with _summary_fetch_lock:
+        now = time.time()
         with _summary_lock:
-            _summary_cache = executor_data
-            _summary_cache_time = time.time()
-        return executor_data
+            if _summary_cache is not None and (now - _summary_cache_time < SUMMARY_CACHE_TTL):
+                return _summary_cache
 
-    # 2. Local fallback if socket exists (unit tests / local dev)
-    client = get_docker_client()
-    if not client:
-        return {
-            "available": False,
-            "error": "Docker socket not accessible and ops-executor unreachable",
-            "containers": [],
-            "running_count": 0,
-            "total_count": 0,
-        }
+        # 1. Primary least-privilege route: query isolated ops-executor daemon
+        executor_data = _call_executor("/containers", timeout=10.0)
+        if executor_data and executor_data.get("available") is True:
+            with _summary_lock:
+                _summary_cache = executor_data
+                _summary_cache_time = time.time()
+            return executor_data
+
+        # 2. Local fallback if socket exists (unit tests / local dev)
+        client = get_docker_client()
+        if not client:
+            return {
+                "available": False,
+                "error": "Docker socket not accessible and ops-executor unreachable",
+                "containers": [],
+                "running_count": 0,
+                "total_count": 0,
+            }
 
     try:
         containers = client.containers.list(all=True)

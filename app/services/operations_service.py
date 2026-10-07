@@ -139,7 +139,7 @@ async def _poll_container_health(container_name: str, max_wait_seconds: int = 15
     """Actively verify that the container returned to running and healthy state via executor/inspect."""
     start_wait = time.time()
     while time.time() - start_wait < max_wait_seconds:
-        inspect = get_container_inspect(container_name)
+        inspect = await asyncio.to_thread(get_container_inspect, container_name)
         if inspect:
             is_running = inspect.get("is_running", False)
             health = inspect.get("health", "unknown").lower()

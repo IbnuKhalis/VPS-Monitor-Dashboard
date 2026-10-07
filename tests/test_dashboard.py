@@ -708,7 +708,7 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
 
         reset_docker_summary_cache_for_tests()
 
-        def slow_executor_call(endpoint):
+        def slow_executor_call(endpoint, *args, **kwargs):
             if endpoint == "/containers":
                 time.sleep(0.3)
                 return {"available": True, "containers": [], "running_count": 0, "total_count": 0}
@@ -888,6 +888,110 @@ class TestPinRateLimitingAndSecurity(unittest.TestCase):
         self.assertIn("httponly", set_cookie)
         self.assertIn("samesite=lax", set_cookie)
 
+
+
+    def test_ops_executor_mutation_lock_rejects_concurrent_execution(self):
+        # Codex S5: Non-blocking mutation lock rejects concurrent POST /execute with 409 Conflict
+        import ops_executor
+        from io import BytesIO
+        import json
+
+        orig_token = ops_executor.AUTH_TOKEN
+        ops_executor.AUTH_TOKEN = "test-secret-token"
+
+        class DummyExecutorHandler(ops_executor.RestrictedExecutorHandler):
+            def __init__(self, body_bytes, headers=None):
+                self.rfile = BytesIO(body_bytes)
+                self.wfile = BytesIO()
+                self.client_address = ("127.0.0.1", 45678)
+                self.path = "/execute"
+                self.command = "POST"
+                self.headers = headers or {
+                    "Content-Length": str(len(body_bytes)),
+                    "X-Executor-Token": "test-secret-token",
+                    "Content-Type": "application/json",
+                }
+                self.sent_status = None
+                self.sent_payload = None
+
+            def _send_json(self, status, payload):
+                self.sent_status = status
+                self.sent_payload = payload
+
+        try:
+            body = json.dumps({"target": "cv-builder", "action": "restart", "correlation_id": "test-lock"}).encode()
+
+            # 1. Acquire lock artificially as if another thread is currently restarting a container
+            acquired = ops_executor._mutation_lock.acquire(blocking=False)
+            self.assertTrue(acquired)
+
+            handler = DummyExecutorHandler(body)
+            with patch("ops_executor.get_docker", return_value=unittest.mock.MagicMock()):
+                handler.do_POST()
+
+            # Must be rejected with 409 Conflict
+            self.assertEqual(handler.sent_status, 409)
+            self.assertEqual(handler.sent_payload.get("error"), "conflict")
+            self.assertIn("already in progress", handler.sent_payload.get("message", ""))
+        finally:
+            if ops_executor._mutation_lock.locked():
+                ops_executor._mutation_lock.release()
+            ops_executor.AUTH_TOKEN = orig_token
+
+    def test_docker_telemetry_cold_cache_stampede_deduplication(self):
+        # Codex S5: In-flight telemetry stampede deduplication
+        from app.services.docker_service import get_containers_summary, reset_docker_summary_cache_for_tests
+        import threading
+        import time
+
+        reset_docker_summary_cache_for_tests()
+        call_count = 0
+        call_lock = threading.Lock()
+
+        def slow_executor(endpoint, *args, **kwargs):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+            time.sleep(0.15)
+            return {
+                "available": True,
+                "containers": [{"id": "c1", "name": "cv-builder", "status": "running", "is_running": True}],
+                "running_count": 1,
+                "total_count": 1,
+            }
+
+        threads = []
+        results = [None] * 5
+
+        def worker(idx):
+            results[idx] = get_containers_summary()
+
+        with patch("app.services.docker_service._call_executor", side_effect=slow_executor):
+            for i in range(5):
+                t = threading.Thread(target=worker, args=(i,))
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
+        # All 5 calls succeeded and received valid summary data
+        for r in results:
+            self.assertIsNotNone(r)
+            self.assertTrue(r["available"])
+        # Crucially, call_count must be 1 because _summary_fetch_lock deduplicated cold cache queries
+        self.assertEqual(call_count, 1)
+
+    def test_operations_service_async_health_polling(self):
+        # Codex S5: Health polling delegates blocking inspect to asyncio.to_thread
+        import asyncio
+        from app.services.operations_service import _poll_container_health
+
+        with patch("app.services.operations_service.get_container_inspect") as mock_inspect:
+            mock_inspect.return_value = {"is_running": True, "health": "healthy"}
+            healthy = asyncio.run(_poll_container_health("cv-builder", max_wait_seconds=2))
+            self.assertTrue(healthy)
+            mock_inspect.assert_called_with("cv-builder")
 
 
 if __name__ == "__main__":
