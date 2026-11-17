@@ -64,14 +64,15 @@ SAMPLE_HEARTBEAT_HEALTHY = {
 
 
 class TestServiceCatalog(unittest.TestCase):
-    def test_nine_canonical_domains_present_without_www_duplicates(self):
+    def test_canonical_domains_present_without_www_duplicates(self):
         catalog = get_service_catalog()
-        self.assertEqual(catalog["total"], 9)
+        self.assertEqual(catalog["total"], 10)
         domains = [s["domain"] for s in catalog["services"]]
         expected_domains = [
             "digitalneeds.my.id",
             "graduance.digitalneeds.my.id",
             "cv.digitalneeds.my.id",
+            "spender.digitalneeds.my.id",
             "status.digitalneeds.my.id",
             "dashboard.digitalneeds.my.id",
             "router.digitalneeds.my.id",
@@ -159,13 +160,14 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         html = resp.text
         self.assertIn("Masukkan PIN untuk membuka dashboard produksi", html)
-        self.assertNotIn("Direktori Layanan Aktif (9 Domain Kanonik)", html)
+        self.assertNotIn("Direktori Layanan Aktif", html)
         for private_domain in [
             "vault.digitalneeds.my.id",
             "sync.digitalneeds.my.id",
             "brain.digitalneeds.my.id",
             "router.digitalneeds.my.id",
             "cv.digitalneeds.my.id",
+            "spender.digitalneeds.my.id",
         ]:
             self.assertNotIn(private_domain, html)
         self.assertIn("Kembali ke DigitalNeeds Hub", html)
@@ -193,7 +195,7 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
         html = resp.text
-        self.assertIn("Direktori Layanan Aktif (9 Domain Kanonik)", html)
+        self.assertIn("Direktori Layanan Aktif (10 Domain Kanonik)", html)
         self.assertIn("Status Layanan Publik (Uptime Kuma)", html)
         self.assertIn("Status Agen Otonom Dineva", html)
         self.assertIn("Hub Beranda", html)
@@ -205,7 +207,7 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
 
         svc_resp = self.client.get("/api/services")
         self.assertEqual(svc_resp.status_code, 200)
-        self.assertEqual(svc_resp.json()["total"], 9)
+        self.assertEqual(svc_resp.json()["total"], 10)
 
         dineva_resp = self.client.get("/api/dineva")
         self.assertEqual(dineva_resp.status_code, 200)

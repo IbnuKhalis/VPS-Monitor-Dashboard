@@ -212,7 +212,7 @@
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                         </svg>
-                        <span x-text="showAllServices ? 'Sembunyikan Direktori (9)' : 'Semua Layanan (9 Domain)'"></span>
+                        <span x-text="showAllServices ? 'Sembunyikan Direktori' : 'Semua Layanan (' + ({{ service_catalog.total if service_catalog else 10 }}) + ' Domain)'"></span>
                     </button>
 
                     <button @click="fetchAllData()"
@@ -640,11 +640,11 @@
                          aria-label="Direktori Semua Layanan">
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 mb-5 border-b border-slate-800">
                         <div>
-                            <h2 class="text-sm font-bold tracking-wide text-white uppercase">Direktori Layanan Aktif (9 Domain Kanonik)</h2>
+                            <h2 class="text-sm font-bold tracking-wide text-white uppercase">Direktori Layanan Aktif ({{ service_catalog.total if service_catalog else 10 }} Domain Kanonik)</h2>
                             <p class="text-xs text-slate-400 mt-1">Inventaris domain produksi berdasarkan peran arsitektur. Label di kanan menunjukkan metode autentikasi, bukan klaim status online.</p>
                         </div>
                         <span class="inline-flex items-center px-3 py-1 rounded-lg text-xs font-mono font-semibold bg-slate-900 text-cyan-300 border border-slate-800 tabular-nums">
-                            {{ service_catalog.total if service_catalog else 9 }} Domain Terdaftar
+                            {{ service_catalog.total if service_catalog else 10 }} Domain Terdaftar
                         </span>
                     </div>
 
