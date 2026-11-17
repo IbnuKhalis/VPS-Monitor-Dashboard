@@ -784,8 +784,9 @@
                 <!-- ========================================================= -->
                 <!-- 6. OPERATIONS AUDIT TRAIL (Zero-Privilege Event Stream)   -->
                 <!-- ========================================================= -->
-                <section class="bento-card bento-surface border border-slate-800/90 rounded-3xl p-5 sm:p-6 mb-7"
-                         x-show="auditTrail && auditTrail.length > 0">
+                <section class="bento-card md:col-span-6 lg:col-span-12 bento-surface border border-slate-800/90 rounded-2xl p-5 sm:p-6"
+                         x-show="auditTrail && auditTrail.length > 0"
+                         aria-label="Audit Trail Operasi Produksi">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center gap-2.5">
                             <div class="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
