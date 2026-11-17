@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
@@ -211,6 +212,47 @@ class TestDashboardPrivacyAndRoutes(unittest.TestCase):
         dineva_data = dineva_resp.json()
         self.assertEqual(dineva_data["mode"], "READ_ONLY")
         self.assertFalse(dineva_data["mutations_allowed"])
+
+    def test_anonymous_and_authenticated_javascript_syntax_validity(self):
+        """Verify client-side script in index.html is valid JS without HTML entity escaping in both auth states."""
+        import re
+        import subprocess
+        import tempfile
+
+        for is_auth in [False, True]:
+            client = TestClient(app, base_url="https://testserver")
+            if is_auth:
+                client.post("/api/verify-pin", json={"pin": settings.dashboard_pin})
+            resp = client.get("/")
+            self.assertEqual(resp.status_code, 200)
+            html = resp.text
+
+            scripts = re.findall(r"<script>(.*?)</script>", html, re.DOTALL)
+            app_script = None
+            for s in scripts:
+                if "function dashboardApp" in s:
+                    app_script = s
+                    break
+
+            self.assertIsNotNone(app_script, "dashboardApp script must be present in index.html")
+            self.assertNotIn("&#34;", app_script, "HTML entity &#34; must not leak into JavaScript code")
+            self.assertNotIn("&quot;", app_script, "HTML entity &quot; must not leak into JavaScript code")
+            self.assertNotIn("&#39;", app_script, "HTML entity &#39; must not leak into JavaScript code")
+
+            # Validate with node --check if node runtime is available
+            try:
+                with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as tf:
+                    tf.write(app_script)
+                    temp_path = tf.name
+                res = subprocess.run(["node", "--check", temp_path], capture_output=True, text=True)
+                os.unlink(temp_path)
+                self.assertEqual(
+                    res.returncode,
+                    0,
+                    f"JavaScript syntax error in dashboardApp (is_auth={is_auth}): {res.stderr}"
+                )
+            except FileNotFoundError:
+                pass  # node not in environment, static regex check above is sufficient
 
     def test_log_sanitization_and_container_name_validation(self):
         raw_log_with_secrets = (

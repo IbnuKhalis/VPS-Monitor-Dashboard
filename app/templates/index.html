@@ -1042,18 +1042,18 @@
                     last_updated: '-',
                     error: 'Memuat ringkasan status publik...'
                 },
-                dineva: {{ (dineva | tojson) if dineva else '{
-                    "available": true,
-                    "name": "Dineva (DigitalNeeds04)",
-                    "role": "Autonomous VPS Worker & Second Brain Custodian",
-                    "status": "CHECKING",
-                    "is_running": false,
-                    "started_at": "-",
-                    "cpu_percent": 0,
-                    "memory": { "used_mb": 0, "percent": 0 },
-                    "last_activity": { "summary": "Memuat status...", "timestamp": "-", "component": "-" },
-                    "sidecar": { "is_running": false, "status": "OFFLINE" }
-                }' }},
+                dineva: {{ (dineva | tojson) if dineva else 'null' }} || {
+                    available: true,
+                    name: "Dineva (DigitalNeeds04)",
+                    role: "Autonomous VPS Worker & Second Brain Custodian",
+                    status: "CHECKING",
+                    is_running: false,
+                    started_at: "-",
+                    cpu_percent: 0,
+                    memory: { used_mb: 0, percent: 0 },
+                    last_activity: { summary: "Memuat status...", timestamp: "-", component: "-" },
+                    sidecar: { is_running: false, status: "OFFLINE" }
+                },
 
                 // Logs Modal
                 logsModalOpen: false,
