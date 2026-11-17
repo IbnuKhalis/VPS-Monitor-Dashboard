@@ -204,7 +204,6 @@ def get_client_ip(request: Request) -> str:
 
 def _evict_stale_pin_records(now: float) -> None:
     """Evict expired lockout records to prevent unbounded memory growth (Codex R2)."""
-    global _pin_attempts
     keys_to_del = [
         ip for ip, rec in _pin_attempts.items()
         if now > rec.get("lockout_until", 0.0) and (now - rec.get("last_attempt", 0.0) > 300)
@@ -221,7 +220,6 @@ def _evict_stale_pin_records(now: float) -> None:
 
 def reset_pin_rate_limit_for_tests():
     """Reset rate limit state for unit tests."""
-    global _pin_attempts
     _pin_attempts.clear()
 
 
